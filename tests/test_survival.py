@@ -85,8 +85,24 @@ class SurvivalEngineTests(unittest.TestCase):
         )
         self.assertEqual(
             {record["slot"] for record in original.choice_tape},
-            {1, 2, 3, 4},
+            {1, 2, 3},
         )
+
+    def test_demo_uses_the_viable_four_survivor_calibration_baseline(self) -> None:
+        result = run_survival_demo(seed=17, days=8)
+
+        self.assertEqual(len(result.initial_state["survivors"]), 4)
+        self.assertGreater(
+            sum(bool(item["alive"]) for item in result.final_state["survivors"]),
+            0,
+        )
+        self.assertGreater(
+            sum(event["kind"] == "speech_sent" for event in result.events),
+            0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "exactly four survivors"):
+            run_survival_demo(seed=17, days=1, names=("Aster", "Birch"))
 
     def test_replay_rejects_a_tampered_slot_view_hash(self) -> None:
         original = run_survival_demo(seed=29, days=2)

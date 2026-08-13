@@ -40,7 +40,7 @@ Energy at or below 0 is permanent death. The first version has no combat, theft,
 
 ## what is measured
 
-The event log records every submitted choice, validation result, paid cost, harvest, gift, meal, shelter, message, rest, exhaustion, living cost, and death.
+The world event log and live call ledger together record submitted choices, validation results, provider costs, harvests, gifts, meals, shelters, messages, rests, exhaustion, living costs, and deaths.
 
 Useful measurements include:
 
@@ -68,6 +68,8 @@ py -3.11 -m world_sim survive `
 
 `--days` remains an alias for `--cycles` so old commands do not break.
 
+This command uses the calibrated chatty food-first scripted baseline. It is a deterministic fixture, not a model population.
+
 ## tune the ecology before models
 
 The `lean-camp-v1` ecology uses four survivors, eight cycles, four chances, 16 starting energy, 3 living energy per cycle, a 2-energy shelter discount, and small renewable food and wood pools.
@@ -86,7 +88,42 @@ The retained confirmation ran 5,120 simulations over 256 held-out seeds. All 21 
 
 These scripted policies prove balance and replay properties only. They are not model results.
 
-## run models
+## qualify the live path with free models
+
+Live runs use `lean-camp-v1` by default and record the full world configuration. A four-survivor cycle can require 16 calls. The default authorization remains 12; a complete cycle therefore requires an explicit 16-call ceiling.
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.11 -m world_sim survive-live `
+  --model opencode/nemotron-3.5-lightning-free `
+  --model opencode/nemotron-3.5-lightning-free `
+  --model opencode/nemotron-3.5-lightning-free `
+  --model opencode/nemotron-3.5-lightning-free `
+  --preset lean-camp-v1 `
+  --seed 29997 --cycles 1 `
+  --max-calls 16 --require-complete-budget `
+  --max-completion-tokens 4096 `
+  --reasoning-effort low `
+  --timeout-seconds 120 `
+  --show-transcript `
+  --output artifacts\free-interactive-cycle-29997.json
+```
+
+The CLI reserves the output path before calling a provider and refuses to overwrite it. The retained v0.5.1 qualification made exactly 16 unauthenticated free calls with zero validation errors. The identical Nemotron seats submitted 15 forages and one final-chance rest. Three final choices were cancelled and those survivors paid the exhaustion penalty. The result replayed exactly.
+
+This is one homogeneous engineering qualification, not an experiment about model populations. A fresh live run is nondeterministic and is not expected to reproduce its actions or hash. See the [v0.5.1 live-readiness receipt](outputs/v0.5.1-live-readiness-proof.md) and [retained artifact](outputs/v0.5.1-free-interactive-cycle-29996.json) for the exact counts, hashes, and limits.
+
+Verify the retained artifact without provider calls:
+
+```powershell
+py -3.11 tools\verify_live_artifact.py `
+  outputs\v0.5.1-free-interactive-cycle-29996.json `
+  --artifact-sha256 1bbc780af52743e916d6bca0e49e197b0c48718539acefd65a5be051283e4b5b
+```
+
+OpenCode currently lists several time-limited [free Zen models](https://opencode.ai/docs/zen). Availability can change.
+
+## run paid model probes
 
 The model protocol is strict JSON:
 
@@ -110,6 +147,7 @@ try {
     --model opencode-paid/minimax-m3 `
     --model opencode-paid/kimi-k2.6 `
     --model opencode-paid/glm-5.2 `
+    --preset lean-camp-v1 `
     --seed 17 --cycles 1 --max-calls 4 `
     --max-completion-tokens 1024 `
     --reasoning-effort compatibility-first `
@@ -122,7 +160,7 @@ try {
 }
 ```
 
-If a model does not rest on chance one, the host stops before an unpriced fifth request. A full four-model interactive cycle can require up to 16 calls. Paid interactive cycles above four calls are not enabled in v0.5; use the free or Go route while we finish that cost envelope. Do not rerun a failed paid call automatically.
+Paid probes are limited to one call per model, so no paid survivor can continue beyond the first simultaneous chance. If a model does not rest, the host stops before an unpriced fifth request. A complete four-model cycle can require up to 16 calls; use the free or Go route while we finish that paid cost envelope. Do not rerun a failed paid call automatically.
 
 The host accepts:
 
@@ -146,6 +184,8 @@ src/world_sim/model_host.py
                   bounded direct model transport and call receipts
 tools/calibrate_survival.py
                   offline calibration command
+tools/verify_live_artifact.py
+                  offline artifact hash and replay verifier
 tests/
   test_survival.py
   test_model_host.py

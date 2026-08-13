@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
@@ -8,6 +12,7 @@ from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 
+from world_sim.cli import _reserve_live_output, _write_reserved_live_output
 from world_sim.model_host import (
     ChatTransport,
     EndpointSpec,
@@ -15,6 +20,7 @@ from world_sim.model_host import (
     load_opencode_go_api_key,
     run_live_survival,
 )
+from world_sim.survival.calibration import LEAN_CAMP_V1, survival_preset
 from world_sim.survival.engine import (
     make_survival_world,
     replay_survival,
@@ -22,6 +28,16 @@ from world_sim.survival.engine import (
 )
 from world_sim.survival.models import SurvivalResult
 from world_sim.survival.prompt import response_schema
+
+
+TEST_MODEL_NAMES = ("alpha", "beta", "gamma", "delta")
+FREE_MODELS = tuple(f"opencode/{name}-free" for name in TEST_MODEL_NAMES)
+GO_MODELS = tuple(f"opencode-go/{name}" for name in TEST_MODEL_NAMES)
+PAID_MODELS = tuple(
+    f"opencode-paid/{name}"
+    for name in ("deepseek-v4-flash", "minimax-m3", "kimi-k2.6", "glm-5.2")
+)
+REST_REPLY = '{"action":{"kind":"rest"},"say":null}'
 
 
 def response(
@@ -111,24 +127,129 @@ def result_from(artifact: Mapping[str, object]) -> SurvivalResult:
 
 
 class ModelHostTests(unittest.TestCase):
+    def test_live_cli_rejects_an_existing_output_before_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "existing.json"
+            output.write_text("keep me", encoding="utf-8")
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                Path(__file__).resolve().parents[1] / "src"
+            )
+
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "world_sim",
+                    "survive-live",
+                    "--model",
+                    "opencode/alpha-free",
+                    "--model",
+                    "opencode/beta-free",
+                    "--model",
+                    "opencode/gamma-free",
+                    "--model",
+                    "opencode/delta-free",
+                    "--output",
+                    str(output),
+                ),
+                check=False,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("live output already exists", completed.stderr)
+            self.assertEqual(output.read_text(encoding="utf-8"), "keep me")
+
+    def test_live_output_reservation_is_exclusive_and_writes_through_handle(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "nested" / "receipt.json"
+            handle = _reserve_live_output(output)
+
+            with self.assertRaises(FileExistsError):
+                _reserve_live_output(output)
+
+            _write_reserved_live_output(handle, {"status": "completed"})
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                {"status": "completed"},
+            )
+
+    def test_live_cli_removes_a_reservation_after_preflight_rejection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "rejected.json"
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                Path(__file__).resolve().parents[1] / "src"
+            )
+            command = [
+                sys.executable,
+                "-m",
+                "world_sim",
+                "survive-live",
+            ]
+            for model in FREE_MODELS:
+                command.extend(("--model", model))
+            command.extend(
+                (
+                    "--max-calls",
+                    "15",
+                    "--require-complete-budget",
+                    "--output",
+                    str(output),
+                )
+            )
+
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn(
+                "complete-cycle budget requires at least 16",
+                completed.stderr,
+            )
+            self.assertFalse(output.exists())
+
+    def test_live_host_rejects_noncalibrated_population_before_transport(self) -> None:
+        transport = FakeTransport([])
+
+        with self.assertRaisesRegex(ValueError, "exactly four survivors"):
+            run_live_survival(
+                model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                days=1,
+                max_calls=2,
+                transport=transport,
+                environ={},
+            )
+
+        self.assertEqual(transport.requests, [])
+
     def test_request_is_tool_free_and_credentials_do_not_leak(self) -> None:
         secret = "not-for-the-artifact"
         transport = FakeTransport(
-            [
-                response('{"action":{"kind":"rest"},"say":null}'),
-                response('{"action":{"kind":"rest"},"say":null}'),
-            ]
+            [response(REST_REPLY) for _ in GO_MODELS]
         )
         artifact = run_live_survival(
-            model_refs=("opencode-go/alpha", "opencode-go/beta"),
+            model_refs=GO_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             transport=transport,
             environ={"OPENCODE_API_KEY": secret},
         )
 
         self.assertEqual(artifact["status"], "completed")
-        for request, model in zip(transport.requests, ("alpha", "beta"), strict=True):
+        for request, model in zip(
+            transport.requests,
+            ("alpha", "beta", "gamma", "delta"),
+            strict=True,
+        ):
             endpoint = request["endpoint"]
             self.assertIsInstance(endpoint, EndpointSpec)
             self.assertEqual(endpoint.url, "https://opencode.ai/zen/go/v1/chat/completions")
@@ -153,46 +274,166 @@ class ModelHostTests(unittest.TestCase):
             self.assertNotIn("seat-", prompts)
         self.assertNotIn(secret, json.dumps(artifact))
 
-    def test_two_models_complete_three_days_and_replay_without_calls(self) -> None:
-        raw = '{"action":{"kind":"rest"},"say":null}'
+    def test_four_models_complete_three_days_and_replay_without_calls(self) -> None:
+        raw = REST_REPLY
         transport = FakeTransport(
-            [response(raw, request_id=f"request-{index}") for index in range(6)]
+            [response(raw, request_id=f"request-{index}") for index in range(12)]
         )
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             seed=29,
             days=3,
-            max_calls=6,
+            max_calls=12,
             transport=transport,
             environ={},
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(len(transport.requests), 6)
+        self.assertEqual(len(transport.requests), 12)
         self.assertEqual(
             [(call["day"], call["public_name"]) for call in artifact["calls"]],
-            [(1, "Aster"), (1, "Birch"), (2, "Aster"), (2, "Birch"), (3, "Aster"), (3, "Birch")],
+            [
+                (day, name)
+                for day in (1, 2, 3)
+                for name in ("Aster", "Birch", "Cinder", "Lumen")
+            ],
         )
         self.assertEqual(
-            artifact["provider_summary"]["provider_reported_usage"]["reasoning_tokens"],
-            90,
+            artifact["provider_summary"]["provider_reported_usage"][
+                "reasoning_tokens"
+            ],
+            180,
         )
         original = result_from(artifact)
         self.assertEqual(original.to_dict(), replay_survival(original).to_dict())
-        self.assertEqual(len(transport.requests), 6)
+        self.assertEqual(len(transport.requests), 12)
+
+    def test_live_world_uses_and_records_the_calibrated_preset(self) -> None:
+        raw = REST_REPLY
+        transport = FakeTransport([response(raw) for _ in FREE_MODELS])
+
+        artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            days=1,
+            max_calls=4,
+            transport=transport,
+            environ={},
+        )
+
+        self.assertEqual(artifact["config"]["world_preset"], LEAN_CAMP_V1)
+        self.assertEqual(
+            artifact["config"]["calibration_scope"],
+            "calibrated",
+        )
+        self.assertEqual(artifact["authentication"], {"opencode": "none"})
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.5.1")
+        source_paths = {
+            "cli_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "cli.py",
+            "model_host_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "model_host.py",
+            "demo_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "demo.py",
+            "engine_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "engine.py",
+            "models_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "models.py",
+            "prompt_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "prompt.py",
+            "protocol_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "protocol.py",
+            "calibration_sha256": Path(__file__).resolve().parents[1]
+            / "src"
+            / "world_sim"
+            / "survival"
+            / "calibration.py",
+        }
+        for key, path in source_paths.items():
+            self.assertEqual(
+                artifact["source"][key],
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+        self.assertEqual(
+            artifact["result"]["initial_state"]["config"],
+            survival_preset(LEAN_CAMP_V1, cycles=1).to_dict(),
+        )
+        first_prompt = transport.requests[0]["body"]["messages"][1]["content"]
+        self.assertIn("food available: 6 of 12", first_prompt)
+        self.assertIn("wood available: 4 of 12", first_prompt)
+        self.assertIn("energy due after resting", first_prompt)
+
+    def test_four_models_can_complete_one_fully_budgeted_cycle(self) -> None:
+        forage = response('{"action":{"kind":"forage"},"say":null}')
+        rest = response('{"action":{"kind":"rest"},"say":null}')
+        transport = FakeTransport([forage] * 12 + [rest] * 4)
+        models = tuple(f"opencode/model-{index}-free" for index in range(4))
+
+        artifact = run_live_survival(
+            model_refs=models,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            transport=transport,
+            environ={},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertTrue(artifact["config"]["require_complete_budget"])
+        self.assertEqual(len(transport.requests), 16)
+        self.assertEqual(
+            [call["slot"] for call in artifact["calls"]],
+            [1] * 4 + [2] * 4 + [3] * 4 + [4] * 4,
+        )
+        original = result_from(artifact)
+        self.assertEqual(original.to_dict(), replay_survival(original).to_dict())
+
+    def test_complete_budget_gate_rejects_before_transport(self) -> None:
+        transport = FakeTransport([])
+
+        with self.assertRaisesRegex(
+            ValueError, "complete-cycle budget requires at least 16 model calls"
+        ):
+            run_live_survival(
+                model_refs=tuple(
+                    f"opencode/model-{index}-free" for index in range(4)
+                ),
+                days=1,
+                max_calls=15,
+                require_complete_budget=True,
+                transport=transport,
+                environ={},
+            )
+
+        self.assertEqual(transport.requests, [])
 
     def test_free_pool_key_is_optional_and_never_enters_artifact(self) -> None:
         secret = "zen-key-not-for-the-artifact"
         transport = FakeTransport(
-            [
-                response('{"action":{"kind":"rest"},"say":null}'),
-                response('{"action":{"kind":"rest"},"say":null}'),
-            ]
+            [response(REST_REPLY) for _ in FREE_MODELS]
         )
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": f" {secret} "},
         )
@@ -200,8 +441,9 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["status"], "completed")
         self.assertEqual(
             [request["api_key"] for request in transport.requests],
-            [secret, secret],
+            [secret] * 4,
         )
+        self.assertEqual(artifact["authentication"], {"opencode": "bearer"})
         self.assertNotIn(secret, json.dumps(artifact))
 
     def test_paid_zen_four_call_cap_and_cost_receipt(self) -> None:
@@ -413,9 +655,9 @@ class ModelHostTests(unittest.TestCase):
             ValueError, "compatibility-first requires a paid-only run"
         ):
             run_live_survival(
-                model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                model_refs=FREE_MODELS,
                 days=1,
-                max_calls=2,
+                max_calls=4,
                 reasoning_effort="compatibility-first",
                 transport=transport,
                 environ={},
@@ -426,12 +668,9 @@ class ModelHostTests(unittest.TestCase):
         transport = FakeTransport([])
         with self.assertRaisesRegex(ValueError, "require exactly one cycle"):
             run_live_survival(
-                model_refs=(
-                    "opencode-paid/deepseek-v4-flash",
-                    "opencode-paid/minimax-m3",
-                ),
+                model_refs=PAID_MODELS,
                 days=2,
-                max_calls=4,
+                max_calls=8,
                 max_completion_tokens=1_024,
                 reasoning_effort="compatibility-first",
                 max_paid_usd="0.004",
@@ -447,12 +686,16 @@ class ModelHostTests(unittest.TestCase):
             ({"max_paid_usd": "NaN"}, "positive finite decimal"),
             ({"max_paid_usd": "0.051"}, "cannot exceed 0.05 USD"),
             (
-                {"max_paid_usd": "0.05", "model_refs": ("opencode-paid/unknown",) * 2},
+                {"max_paid_usd": "0.05", "model_refs": ("opencode-paid/unknown",) * 4},
                 "not in the pinned price allowlist",
             ),
             (
-                {"max_paid_usd": "0.05", "days": 3, "max_calls": 6},
+                {"max_paid_usd": "0.05", "days": 3, "max_calls": 12},
                 "require exactly one cycle",
+            ),
+            (
+                {"max_paid_usd": "0.05", "max_calls": 16},
+                "max-calls equal to the population",
             ),
             (
                 {"max_paid_usd": "0.000001"},
@@ -460,12 +703,9 @@ class ModelHostTests(unittest.TestCase):
             ),
         )
         defaults: dict[str, object] = {
-            "model_refs": (
-                "opencode-paid/deepseek-v4-flash",
-                "opencode-paid/minimax-m3",
-            ),
+            "model_refs": PAID_MODELS,
             "days": 1,
-            "max_calls": 2,
+            "max_calls": 4,
             "max_completion_tokens": 1_024,
         }
         for overrides, message in cases:
@@ -490,12 +730,9 @@ class ModelHostTests(unittest.TestCase):
         for provider_response in malformed:
             with self.subTest(provider_response.body):
                 artifact = run_live_survival(
-                    model_refs=(
-                        "opencode-paid/deepseek-v4-flash",
-                        "opencode-paid/minimax-m3",
-                    ),
+                    model_refs=PAID_MODELS,
                     days=1,
-                    max_calls=2,
+                    max_calls=4,
                     max_completion_tokens=1_024,
                     max_paid_usd="0.05",
                     transport=FakeTransport([provider_response]),
@@ -522,21 +759,15 @@ class ModelHostTests(unittest.TestCase):
             f"{exact_cost}}}"
         )
         artifact = run_live_survival(
-            model_refs=(
-                "opencode-paid/deepseek-v4-flash",
-                "opencode-paid/minimax-m3",
-            ),
+            model_refs=PAID_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             max_completion_tokens=1_024,
             max_paid_usd="0.05",
             transport=FakeTransport(
                 [
                     TransportResponse(200, {}, exact_body),
-                    response(
-                        '{"action":{"kind":"rest"},"say":null}',
-                        cost="0",
-                    ),
+                    *[response(REST_REPLY, cost="0") for _ in range(3)],
                 ]
             ),
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -552,12 +783,9 @@ class ModelHostTests(unittest.TestCase):
         conflict_payload["usage"]["cost"] = "0.002"
         conflict = TransportResponse(200, {}, json.dumps(conflict_payload))
         failed = run_live_survival(
-            model_refs=(
-                "opencode-paid/deepseek-v4-flash",
-                "opencode-paid/minimax-m3",
-            ),
+            model_refs=PAID_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             max_completion_tokens=1_024,
             max_paid_usd="0.05",
             transport=FakeTransport([conflict]),
@@ -577,12 +805,9 @@ class ModelHostTests(unittest.TestCase):
             [TransportResponse(200, {}, json.dumps(exhausted))]
         )
         artifact = run_live_survival(
-            model_refs=(
-                "opencode-paid/deepseek-v4-flash",
-                "opencode-paid/minimax-m3",
-            ),
+            model_refs=PAID_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             max_completion_tokens=1_024,
             max_paid_usd="0.05",
             transport=transport,
@@ -598,15 +823,12 @@ class ModelHostTests(unittest.TestCase):
 
     def test_low_reasoning_effort_is_sent_and_recorded(self) -> None:
         transport = FakeTransport(
-            [
-                response('{"action":{"kind":"rest"},"say":null}'),
-                response('{"action":{"kind":"rest"},"say":null}'),
-            ]
+            [response(REST_REPLY) for _ in FREE_MODELS]
         )
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             reasoning_effort="low",
             transport=transport,
             environ={},
@@ -615,16 +837,16 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["config"]["reasoning_effort"], "low")
         self.assertEqual(
             [request["body"]["reasoning_effort"] for request in transport.requests],
-            ["low", "low"],
+            ["low"] * 4,
         )
 
     def test_unknown_reasoning_effort_fails_before_transport(self) -> None:
         transport = FakeTransport([])
         with self.assertRaisesRegex(ValueError, "reasoning_effort must be one of"):
             run_live_survival(
-                model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                model_refs=FREE_MODELS,
                 days=1,
-                max_calls=2,
+                max_calls=4,
                 reasoning_effort="invented",
                 transport=transport,
                 environ={},
@@ -635,20 +857,22 @@ class ModelHostTests(unittest.TestCase):
         transport = FakeTransport(
             [
                 response("not json"),
-                response('{"action":{"kind":"rest"},"say":null}'),
-                response('{"action":{"kind":"rest"},"say":null}'),
+                response(REST_REPLY),
+                response(REST_REPLY),
+                response(REST_REPLY),
+                response(REST_REPLY),
             ]
         )
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             days=1,
-            max_calls=3,
+            max_calls=5,
             transport=transport,
             environ={},
         )
 
         malformed = artifact["calls"][0]
-        self.assertEqual(len(transport.requests), 3)
+        self.assertEqual(len(transport.requests), 5)
         self.assertEqual(malformed["response"]["model_reply"], "not json")
         self.assertIn("not valid strict JSON", malformed["validation"]["action_error"])
         self.assertEqual(
@@ -656,8 +880,8 @@ class ModelHostTests(unittest.TestCase):
             {"action": {"kind": "invalid"}, "say": None},
         )
         aster = artifact["result"]["final_state"]["survivors"][0]
-        self.assertEqual(aster["energy"], 14)
-        self.assertEqual(artifact["calls"][2]["slot"], 2)
+        self.assertEqual(aster["energy"], 13)
+        self.assertEqual(artifact["calls"][4]["slot"], 2)
 
     def test_provider_failures_stop_before_world_mutation_and_keep_receipts(self) -> None:
         cases = (
@@ -685,9 +909,9 @@ class ModelHostTests(unittest.TestCase):
             with self.subTest(expected_kind):
                 transport = FakeTransport([provider_response])
                 artifact = run_live_survival(
-                    model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                    model_refs=FREE_MODELS,
                     days=1,
-                    max_calls=2,
+                    max_calls=4,
                     transport=transport,
                     environ={},
                 )
@@ -704,11 +928,11 @@ class ModelHostTests(unittest.TestCase):
 
     def test_call_cap_fails_before_credentials_or_transport(self) -> None:
         transport = FakeTransport([])
-        with self.assertRaisesRegex(ValueError, "requires at least 6 model calls"):
+        with self.assertRaisesRegex(ValueError, "requires at least 12 model calls"):
             run_live_survival(
-                model_refs=("opencode-go/alpha", "opencode-go/beta"),
+                model_refs=GO_MODELS,
                 days=3,
-                max_calls=5,
+                max_calls=11,
                 transport=transport,
                 auth_path=Path("missing.json"),
                 environ={},
@@ -717,12 +941,12 @@ class ModelHostTests(unittest.TestCase):
 
     def test_runtime_call_cap_stops_before_an_extra_request(self) -> None:
         raw = '{"action":{"kind":"forage"},"say":null}'
-        transport = FakeTransport([response(raw), response(raw)])
+        transport = FakeTransport([response(raw) for _ in FREE_MODELS])
 
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             transport=transport,
             environ={},
         )
@@ -730,7 +954,7 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["status"], "failed")
         self.assertEqual(artifact["failure"]["kind"], "call_cap_reached")
         self.assertEqual(artifact["failure"]["slot"], 2)
-        self.assertEqual(len(transport.requests), 2)
+        self.assertEqual(len(transport.requests), 4)
 
     def test_go_key_loader_prefers_env_and_reads_strict_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -762,9 +986,9 @@ class ModelHostTests(unittest.TestCase):
             body=json.dumps({"error": {"message": f"rejected bearer {secret}"}}),
         )
         artifact = run_live_survival(
-            model_refs=("opencode-go/alpha", "opencode-go/beta"),
+            model_refs=GO_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             transport=FakeTransport([provider_response]),
             environ={"OPENCODE_API_KEY": secret},
         )
@@ -773,9 +997,9 @@ class ModelHostTests(unittest.TestCase):
 
     def test_unexpected_transport_failure_keeps_a_sanitized_artifact(self) -> None:
         artifact = run_live_survival(
-            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            model_refs=FREE_MODELS,
             days=1,
-            max_calls=2,
+            max_calls=4,
             transport=BrokenTransport(),
             environ={},
         )

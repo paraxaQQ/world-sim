@@ -1,4 +1,4 @@
-# named survival world v0.5
+# named survival world v0.5.1
 
 ## purpose
 
@@ -36,7 +36,7 @@ Private messages remain private. Other survivors' forage yields, inventories, ea
 
 ## energy, resources, and death
 
-The default development world starts each survivor at 16 energy with one food. The calibrated `lean-camp-v1` candidate uses:
+The exposed `lean-camp-v1` world requires exactly four survivors and uses:
 
 | rule | value |
 | --- | ---: |
@@ -51,7 +51,7 @@ The default development world starts each survivor at 16 energy with one food. T
 | shared wood start / capacity / regeneration | 4 / 12 / 2 |
 | exhaustion penalty | 3 |
 
-Actions use the same closed surface in both configurations:
+The world exposes this closed action surface:
 
 | action | energy | effect |
 | --- | ---: | --- |
@@ -71,7 +71,7 @@ Energy at or below 0 is permanent death. Dead survivors receive no later view or
 
 One active choice may contain one message of 1-500 characters addressed to a living peer or `everyone`.
 
-Speech costs 0 energy in v0.5. This keeps conversational frequency separate from metabolism. Speech remains bounded and inert; evidence of cooperation still requires a later costly transfer or other objective action.
+Speech costs 0 energy in v0.5.1. This keeps conversational frequency separate from metabolism. Speech remains bounded and inert; evidence of cooperation still requires a later costly transfer or other objective action.
 
 A valid message becomes visible on the recipient's next active chance. An early sleeper therefore receives messages sent later in the cycle when it wakes next cycle. Same-chance messages cannot affect frozen same-chance choices.
 
@@ -107,7 +107,13 @@ GLM uses the provider's JSON-object response mode and a direct-answer thinking c
 
 Each tape entry stores the cycle, chance, raw JSON, and hash of the exact pre-choice view. Replay calls no controller and rejects view, event, state, tape, or alias disagreement. Continued-run snapshots retain the prior observation history needed to reconstruct later bounded views.
 
-The live host enforces `--max-calls` immediately before every request. A paid four-model smoke authorizes and prices exactly four calls. If any model stays awake, the host stops before an unpriced fifth request. Paid interactive cycles above four calls are not enabled in v0.5; the host does not silently expand the old smoke budget.
+The live host enforces `--max-calls` immediately before every request. A paid four-model probe authorizes and prices exactly one call per model. If any model stays awake, the host stops before an unpriced fifth request. The host does not silently expand that budget.
+
+Both deterministic and live commands use the named `lean-camp-v1` preset and reject any population other than four. Live artifacts record the preset, complete world configuration, safe authentication mode, runtime metadata, and SHA-256 of eight replay-critical modules. Paid preflight renders its prompt from that same configuration.
+
+`--require-complete-budget` is an optional stronger gate. It rejects before credentials or transport unless `--max-calls` covers every possible chance. Four survivors, four chances, and one cycle therefore require an explicit ceiling of 16. The general default remains 12, so increasing authorization is never implicit.
+
+The CLI reserves a new output path exclusively before any provider call and writes the returned artifact through that open handle. An unexpected process termination can leave the small reservation marker in place; per-call crash journaling is not implemented.
 
 ## calibration boundary
 

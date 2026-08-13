@@ -1,5 +1,13 @@
 # changelog
 
+## 0.5.1 - 2026-08-13
+
+- make deterministic and live survivor runs use the calibrated `lean-camp-v1` ecology instead of the easier development defaults, and record the preset plus complete world configuration in live artifacts.
+- enforce the preset's calibrated four-survivor population and reuse the viable chatty food-first baseline for deterministic reference runs.
+- add `--require-complete-budget`. A full-cycle run now rejects before transport unless `--max-calls` covers every possible chance; the default authorization remains 12 calls.
+- reserve live output paths exclusively before provider calls, record authentication mode and eight replay-critical source hashes, and use the same calibrated configuration for paid prompt-cost preflight.
+- retain a real unauthenticated free-model qualification with 16 successful schema-valid calls, zero retries, exact replay, one final-chance rest, and three exhaustion events.
+
 ## 0.5.0 - 2026-08-13
 
 - replace one-choice days with four-chance cycles: each survivor may act and speak repeatedly, voluntary rest ends its cycle, and missing the final rest deadline cancels the attempted choice and applies exhaustion.

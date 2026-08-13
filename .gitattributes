@@ -1,0 +1,9 @@
+outputs/v0.5.1-free-interactive-cycle-29996.json -text
+src/world_sim/cli.py text eol=lf
+src/world_sim/model_host.py text eol=lf
+src/world_sim/survival/calibration.py text eol=lf
+src/world_sim/survival/demo.py text eol=lf
+src/world_sim/survival/engine.py text eol=lf
+src/world_sim/survival/models.py text eol=lf
+src/world_sim/survival/prompt.py text eol=lf
+src/world_sim/survival/protocol.py text eol=lf

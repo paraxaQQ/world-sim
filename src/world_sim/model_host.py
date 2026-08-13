@@ -4,12 +4,14 @@ import hashlib
 import http.client
 import json
 import os
+import platform
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
+from .survival.calibration import LEAN_CAMP_V1, survival_preset
 from .survival.demo import result_sha256, survival_metrics
 from .survival.engine import (
     SurvivalChoiceProvider,
@@ -23,6 +25,7 @@ from .survival.protocol import MODEL_MAX_COMPLETION_TOKENS, parse_model_response
 
 
 ADAPTER_NAME = "opencode-direct-chat-completions"
+WORLD_SIM_VERSION = "0.5.1"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
@@ -131,7 +134,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.5.0",
+            "User-Agent": "world-sim/0.5.1",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -345,19 +348,27 @@ def run_live_survival(
     reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
     max_paid_usd: Decimal | str | None = None,
     timeout_seconds: float = DEFAULT_LIVE_TIMEOUT_SECONDS,
+    world_preset: str = LEAN_CAMP_V1,
+    require_complete_budget: bool = False,
     transport: ChatTransport | None = None,
     auth_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     assignments = _assign_models(model_refs)
-    world_config = SurvivalConfig(max_days=days)
+    world_config = survival_preset(
+        world_preset,
+        cycles=days,
+        population=len(assignments),
+    )
     _validate_limits(
         len(assignments),
         days,
+        world_config.slots_per_cycle,
         max_calls,
         max_completion_tokens,
         temperature,
         timeout_seconds,
+        require_complete_budget,
     )
     if reasoning_effort not in LIVE_REASONING_EFFORTS:
         raise ValueError(
@@ -378,7 +389,7 @@ def run_live_survival(
         all_assignments=assignments,
         seed=seed,
         days=days,
-        slots_per_cycle=world_config.slots_per_cycle,
+        world_config=world_config,
         max_calls=max_calls,
         max_completion_tokens=max_completion_tokens,
         temperature=temperature,
@@ -428,12 +439,41 @@ def run_live_survival(
         "format_version": 2,
         "mode": "live_named_survival",
         "adapter": ADAPTER_NAME,
+        "source": {
+            "world_sim_version": WORLD_SIM_VERSION,
+            "python_version": platform.python_version(),
+            "platform_system": platform.system(),
+            "cli_sha256": _module_sha256(Path(__file__).with_name("cli.py")),
+            "model_host_sha256": _module_sha256(Path(__file__)),
+            "demo_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "demo.py"
+            ),
+            "engine_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "engine.py"
+            ),
+            "models_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "models.py"
+            ),
+            "prompt_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "prompt.py"
+            ),
+            "protocol_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "protocol.py"
+            ),
+            "calibration_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "calibration.py"
+            ),
+        },
         "config": {
             "seed": seed,
             "days_requested": days,
             "cycles_requested": days,
             "slots_per_cycle": world_config.slots_per_cycle,
+            "world_preset": world_preset,
+            "calibration_scope": "calibrated",
+            "world_config": world_config.to_dict(),
             "max_calls": max_calls,
+            "require_complete_budget": require_complete_budget,
             "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
             "reasoning_effort": reasoning_effort,
@@ -441,6 +481,20 @@ def run_live_survival(
             "timeout_seconds": timeout_seconds,
         },
         "paid_preflight": paid_preflight,
+        "authentication": {
+            provider: (
+                "bearer"
+                if (
+                    provider in {"opencode", "opencode-paid"}
+                    and zen_key is not None
+                )
+                or (provider == "opencode-go" and go_key is not None)
+                else "none"
+            )
+            for provider in sorted(
+                {assignment.endpoint.provider for assignment in assignments}
+            )
+        },
         "seat_assignments": [assignment.to_dict() for assignment in assignments],
         "calls": calls,
     }
@@ -598,7 +652,7 @@ def _paid_preflight(
     all_assignments: Sequence[_Assignment],
     seed: int,
     days: int,
-    slots_per_cycle: int,
+    world_config: SurvivalConfig,
     max_calls: int,
     max_completion_tokens: int,
     temperature: float,
@@ -623,12 +677,12 @@ def _paid_preflight(
         raise ValueError(
             "paid Zen smoke runs require --max-calls equal to the population"
         )
-    world_max_calls = len(assignments) * days * slots_per_cycle
+    world_max_calls = len(assignments) * days * world_config.slots_per_cycle
     names = tuple(assignment.public_name for assignment in all_assignments)
     world = make_survival_world(
         names,
         seed=seed,
-        config=SurvivalConfig(max_days=days),
+        config=world_config,
     )
     rows: list[dict[str, str | int]] = []
     total = Decimal("0")
@@ -724,10 +778,12 @@ def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
 def _validate_limits(
     population: int,
     days: int,
+    slots_per_cycle: int,
     max_calls: int,
     max_completion_tokens: int,
     temperature: float,
     timeout_seconds: float,
+    require_complete_budget: bool,
 ) -> None:
     if days < 1:
         raise ValueError("cycles must be positive")
@@ -736,6 +792,12 @@ def _validate_limits(
         raise ValueError(
             f"this run requires at least {minimum_calls} model calls, "
             f"above --max-calls {max_calls}"
+        )
+    complete_budget = population * days * slots_per_cycle
+    if require_complete_budget and complete_budget > max_calls:
+        raise ValueError(
+            "a complete-cycle budget requires at least "
+            f"{complete_budget} model calls, above --max-calls {max_calls}"
         )
     if not 1 <= max_completion_tokens <= MODEL_MAX_COMPLETION_TOKENS:
         raise ValueError(
@@ -844,6 +906,10 @@ def _parse_nonnegative_decimal(value: object, *, name: str) -> Decimal:
 def _decimal_text(value: Decimal) -> str:
     text = format(value.normalize(), "f")
     return "0" if text == "-0" else text
+
+
+def _module_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _error_receipt(response: TransportResponse) -> dict[str, object]:

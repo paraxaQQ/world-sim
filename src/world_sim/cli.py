@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Sequence, TextIO
 
 from .experiment import run_counterfactual_pair, run_pilot
 from .metrics import calculate_metrics
@@ -19,8 +20,8 @@ from .model_host import (
 )
 from .models import SelectionMode, VerificationMode, WorldConfig
 from .selection import LineageConfig, LineageExperiment, run_lineage_experiment, run_selection_matrix
+from .survival.calibration import CALIBRATION_NAMES, LEAN_CAMP_V1
 from .survival.demo import result_sha256, run_survival_demo, survival_metrics
-from .survival.models import DEFAULT_SURVIVOR_NAMES
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,12 +34,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     survive.add_argument("--seed", type=int, default=17)
     survive.add_argument("--cycles", "--days", dest="cycles", type=int, default=8)
+    survive.add_argument("--preset", choices=(LEAN_CAMP_V1,), default=LEAN_CAMP_V1)
     survive.add_argument(
         "--population",
         type=int,
-        choices=range(2, len(DEFAULT_SURVIVOR_NAMES) + 1),
-        default=len(DEFAULT_SURVIVOR_NAMES),
-        metavar="2..8",
+        choices=(len(CALIBRATION_NAMES),),
+        default=len(CALIBRATION_NAMES),
+        metavar="4",
     )
     survive.add_argument("--output", type=Path)
 
@@ -52,13 +54,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         dest="models",
         required=True,
         metavar="PROVIDER/MODEL",
-        help="assign one model to the next hidden seat; repeat 2-8 times",
+        help="assign one model to the next hidden seat; repeat exactly four times",
     )
     survive_live.add_argument("--seed", type=int, default=17)
     survive_live.add_argument(
         "--cycles", "--days", dest="cycles", type=int, default=1
     )
+    survive_live.add_argument(
+        "--preset", choices=(LEAN_CAMP_V1,), default=LEAN_CAMP_V1
+    )
     survive_live.add_argument("--max-calls", type=int, default=DEFAULT_LIVE_MAX_CALLS)
+    survive_live.add_argument(
+        "--require-complete-budget",
+        action="store_true",
+        help="reject before transport unless max-calls covers every chance",
+    )
     survive_live.add_argument("--max-completion-tokens", type=int, default=4096)
     survive_live.add_argument(
         "--temperature",
@@ -110,14 +120,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_lineage_arguments(matrix)
 
     args = parser.parse_args(argv)
+    live_output: TextIO | None = None
+    if args.command == "survive-live":
+        if len(args.models) != len(CALIBRATION_NAMES):
+            parser.error("lean-camp-v1 requires exactly four model assignments")
+        try:
+            live_output = _reserve_live_output(args.output)
+        except FileExistsError:
+            parser.error(f"live output already exists: {args.output}")
+        except OSError as error:
+            parser.error(f"cannot reserve live output: {error}")
     exit_code = 0
     if args.command == "survive":
-        names = DEFAULT_SURVIVOR_NAMES[: args.population]
-        result = run_survival_demo(seed=args.seed, days=args.cycles, names=names)
+        result = run_survival_demo(
+            seed=args.seed,
+            days=args.cycles,
+            names=CALIBRATION_NAMES,
+            preset=args.preset,
+        )
         payload = result.to_dict()
         summary = {
             "mode": "named_survival_reference",
             "seed": args.seed,
+            "world_preset": args.preset,
             "cycles_completed": payload["final_state"]["cycle"],
             "finished_reason": payload["final_state"]["finished_reason"],
             "canonical_sha256": result_sha256(result),
@@ -135,15 +160,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reasoning_effort=args.reasoning_effort,
                 max_paid_usd=args.max_paid_usd,
                 timeout_seconds=args.timeout_seconds,
+                world_preset=args.preset,
+                require_complete_budget=args.require_complete_budget,
             )
         except ValueError as error:
+            assert live_output is not None
+            live_output.close()
+            args.output.unlink()
             parser.error(str(error))
+        assert live_output is not None
+        _write_reserved_live_output(live_output, payload)
+        live_output = None
         if payload["status"] == "completed":
             result_payload = payload["result"]
             summary = {
                 "mode": payload["mode"],
                 "status": payload["status"],
                 "seed": args.seed,
+                "world_preset": args.preset,
                 "cycles_completed": result_payload["final_state"]["cycle"],
                 "finished_reason": result_payload["final_state"]["finished_reason"],
                 "canonical_sha256": payload["canonical_result_sha256"],
@@ -156,6 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "mode": payload["mode"],
                 "status": payload["status"],
                 "seed": args.seed,
+                "world_preset": args.preset,
                 "cycles_completed": payload["partial_state"]["cycle"],
                 "failure": payload["failure"],
                 "provider_summary": payload["provider_summary"],
@@ -218,15 +253,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         raise RuntimeError(f"unsupported command {args.command!r}")
 
-    if args.output is not None:
+    if args.output is not None and args.command != "survive-live":
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        summary["output"] = str(args.output)
+    elif args.command == "survive-live":
         summary["output"] = str(args.output)
     if args.command == "survive-live" and args.show_transcript:
         for call in payload["calls"]:
             _print_live_call(call)
     print(json.dumps(summary, sort_keys=True))
     return exit_code
+
+
+def _reserve_live_output(path: Path) -> TextIO:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("x+", encoding="utf-8", newline="\n")
+    handle.write('{"status":"reserved"}\n')
+    handle.flush()
+    os.fsync(handle.fileno())
+    return handle
+
+
+def _write_reserved_live_output(
+    handle: TextIO,
+    payload: Mapping[str, object],
+) -> None:
+    handle.seek(0)
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+    handle.truncate()
+    handle.flush()
+    os.fsync(handle.fileno())
+    handle.close()
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:

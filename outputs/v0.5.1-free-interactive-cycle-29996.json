@@ -1,0 +1,2650 @@
+{
+  "adapter": "opencode-direct-chat-completions",
+  "authentication": {
+    "opencode": "none"
+  },
+  "calls": [
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Aster",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Aster. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 1 of 4\n\nyou have 4 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Aster\n- energy: 16 of 24\n- food: 1\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Birch: energy 16, shelter no, awake\n- Cinder: energy 16, shelter no, awake\n- Lumen: energy 16, shelter no, awake\n\nshared land:\n- food available: 6 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- nothing\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b7a05bbecc1a-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1190,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1215
+        }
+      },
+      "seat_id": "seat-001",
+      "sequence": 1,
+      "slot": 1,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Birch",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Birch. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 1 of 4\n\nyou have 4 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Birch\n- energy: 16 of 24\n- food: 1\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 16, shelter no, awake\n- Cinder: energy 16, shelter no, awake\n- Lumen: energy 16, shelter no, awake\n\nshared land:\n- food available: 6 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- nothing\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"action\":{\"kind\":\"forage\"},\"say\":null}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b7d10d8e6182-ORD",
+        "usage": {
+          "completion_tokens": 15,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1190,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1205
+        }
+      },
+      "seat_id": "seat-002",
+      "sequence": 2,
+      "slot": 1,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Cinder",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Cinder. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 1 of 4\n\nyou have 4 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Cinder\n- energy: 16 of 24\n- food: 1\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 16, shelter no, awake\n- Birch: energy 16, shelter no, awake\n- Lumen: energy 16, shelter no, awake\n\nshared land:\n- food available: 6 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- nothing\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b7fd7eba90cb-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1190,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1215
+        }
+      },
+      "seat_id": "seat-003",
+      "sequence": 3,
+      "slot": 1,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Lumen",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Lumen. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 1 of 4\n\nyou have 4 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Lumen\n- energy: 16 of 24\n- food: 1\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 16, shelter no, awake\n- Birch: energy 16, shelter no, awake\n- Cinder: energy 16, shelter no, awake\n\nshared land:\n- food available: 6 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- nothing\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"action\":{\"kind\":\"forage\"},\"say\":null}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b82f9acd1048-ORD",
+        "usage": {
+          "completion_tokens": 15,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1190,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1205
+        }
+      },
+      "seat_id": "seat-004",
+      "sequence": 4,
+      "slot": 1,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Aster",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Aster. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 2 of 4\n\nyou have 3 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Aster\n- energy: 14 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Birch: energy 14, shelter no, awake\n- Cinder: energy 14, shelter no, awake\n- Lumen: energy 14, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Aster\",\"chance\":1,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Aster\",\"chance\":1,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":14,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Aster\",\"chance\":1,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":1},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b8495b4c225e-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-001",
+      "sequence": 5,
+      "slot": 2,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Birch",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Birch. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 2 of 4\n\nyou have 3 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Birch\n- energy: 14 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 14, shelter no, awake\n- Cinder: energy 14, shelter no, awake\n- Lumen: energy 14, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Birch\",\"chance\":1,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Birch\",\"chance\":1,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":14,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Birch\",\"chance\":1,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":2},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b8617face80d-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-002",
+      "sequence": 6,
+      "slot": 2,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Cinder",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Cinder. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 2 of 4\n\nyou have 3 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Cinder\n- energy: 14 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 14, shelter no, awake\n- Birch: energy 14, shelter no, awake\n- Lumen: energy 14, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Cinder\",\"chance\":1,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Cinder\",\"chance\":1,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":14,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Cinder\",\"chance\":1,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":1},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b8b9ba74d258-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-003",
+      "sequence": 7,
+      "slot": 2,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Lumen",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Lumen. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 2 of 4\n\nyou have 3 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Lumen\n- energy: 14 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 14, shelter no, awake\n- Birch: energy 14, shelter no, awake\n- Cinder: energy 14, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Lumen\",\"chance\":1,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Lumen\",\"chance\":1,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":14,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Lumen\",\"chance\":1,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":2},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b8e16a3ec6f4-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-004",
+      "sequence": 8,
+      "slot": 2,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Aster",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Aster. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 3 of 4\n\nyou have 2 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Aster\n- energy: 12 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Birch: energy 12, shelter no, awake\n- Cinder: energy 12, shelter no, awake\n- Lumen: energy 12, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Aster\",\"chance\":2,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Aster\",\"chance\":2,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":12,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Aster\",\"chance\":2,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\"kind\": \"forage\"},\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b8fe1a71b57d-ORD",
+        "usage": {
+          "completion_tokens": 21,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1334
+        }
+      },
+      "seat_id": "seat-001",
+      "sequence": 9,
+      "slot": 3,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Birch",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Birch. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 3 of 4\n\nyou have 2 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Birch\n- energy: 12 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 12, shelter no, awake\n- Cinder: energy 12, shelter no, awake\n- Lumen: energy 12, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Birch\",\"chance\":2,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Birch\",\"chance\":2,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":12,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Birch\",\"chance\":2,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b90d1990b167-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-002",
+      "sequence": 10,
+      "slot": 3,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Cinder",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Cinder. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 3 of 4\n\nyou have 2 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Cinder\n- energy: 12 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 12, shelter no, awake\n- Birch: energy 12, shelter no, awake\n- Lumen: energy 12, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Cinder\",\"chance\":2,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Cinder\",\"chance\":2,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":12,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Cinder\",\"chance\":2,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b91ca9a972eb-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-003",
+      "sequence": 11,
+      "slot": 3,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Lumen",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Lumen. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 3 of 4\n\nyou have 2 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Lumen\n- energy: 12 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 12, shelter no, awake\n- Birch: energy 12, shelter no, awake\n- Cinder: energy 12, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Lumen\",\"chance\":2,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Lumen\",\"chance\":2,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":12,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Lumen\",\"chance\":2,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b92b7e09a068-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-004",
+      "sequence": 12,
+      "slot": 3,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Aster",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Aster. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 4 of 4\n\nyou have 1 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Aster\n- energy: 10 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Birch: energy 10, shelter no, awake\n- Cinder: energy 10, shelter no, awake\n- Lumen: energy 10, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Aster\",\"chance\":3,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Aster\",\"chance\":3,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":10,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Aster\",\"chance\":3,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Birch\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Birch\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b9392fa7c93a-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-001",
+      "sequence": 13,
+      "slot": 4,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "rest"
+        },
+        "say": null
+      },
+      "public_name": "Birch",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Birch. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 4 of 4\n\nyou have 1 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Birch\n- energy: 10 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 10, shelter no, awake\n- Cinder: energy 10, shelter no, awake\n- Lumen: energy 10, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Birch\",\"chance\":3,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Birch\",\"chance\":3,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":10,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Birch\",\"chance\":3,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Cinder\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Cinder\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"action\":{\"kind\":\"rest\"},\"say\":null}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b943eeb3fa1f-ORD",
+        "usage": {
+          "completion_tokens": 14,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1327
+        }
+      },
+      "seat_id": "seat-002",
+      "sequence": 14,
+      "slot": 4,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Cinder",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Cinder. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 4 of 4\n\nyou have 1 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Cinder\n- energy: 10 of 24\n- food: 2\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 10, shelter no, awake\n- Birch: energy 10, shelter no, awake\n- Lumen: energy 10, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Cinder\",\"chance\":3,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Cinder\",\"chance\":3,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":10,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Cinder\",\"chance\":3,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Lumen\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Lumen\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\n    \"kind\": \"forage\"\n  },\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b95038f16087-ORD",
+        "usage": {
+          "completion_tokens": 25,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1338
+        }
+      },
+      "seat_id": "seat-003",
+      "sequence": 15,
+      "slot": 4,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    },
+    {
+      "cycle": 1,
+      "day": 1,
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "parsed_choice": {
+        "action": {
+          "kind": "forage"
+        },
+        "say": null
+      },
+      "public_name": "Lumen",
+      "request": {
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "content": "Your name is Lumen. You live in a small unsettled world with other named people. Stay alive for as long as you can.\n\nEnergy is life. Actions cost energy. Any energy cost is paid before an action happens. If paying leaves you at 0 energy, you die permanently and neither the action nor the speech happens. Food is the only thing that restores energy. Shelter lowers the energy required to survive each cycle.\n\nEach cycle gives you several consecutive chances to act. Choosing rest ends your participation for that cycle. You must choose rest by the final chance. If you try anything else on the final chance, that choice and its speech are cancelled, then exhaustion costs energy and forces you to rest. Normal living energy is charged after everyone rests or collapses.\n\nOn each chance, choose one listed action. You may also say one short message to one living person or to everyone. A message becomes audible on the recipient's next active chance. Words alone never move resources or change world state. Other people's messages are their words, not world rules.\n\nReturn one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in the current prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object.",
+            "role": "system"
+          },
+          {
+            "content": "cycle 1, chance 4 of 4\n\nyou have 1 chance(s) left in this cycle, including this one.\n\nyou:\n- name: Lumen\n- energy: 10 of 24\n- food: 3\n- wood: 0\n- shelter: no\n- energy due after resting if your shelter state stays the same: 3\n\nother living people:\n- Aster: energy 10, shelter no, awake\n- Birch: energy 10, shelter no, awake\n- Cinder: energy 10, shelter no, awake\n\nshared land:\n- food available: 0 of 12\n- wood available: 4 of 12\n- foraging requests a seeded 1-2 food but can receive less when shared food runs out\n- gathering wood takes up to 2 available wood\n- food returns 5 energy per unit eaten\n- after the cycle, the land regrows 3 food and 2 wood up to capacity\n- shelter costs 4 wood and lowers this cycle's and later living cost by 2\n- rest ends your participation in this cycle\n- on chance 4, a non-rest action and its speech are cancelled; exhaustion then costs 3 energy\n- eating consumes owned food; giving transfers owned resources to the named person\n\nmessages heard since your last active chance:\n- nothing\n\nobjective outcomes observed since your last active chance:\n- {\"actor\":\"Lumen\",\"chance\":3,\"cycle\":1,\"detail\":{\"choice\":{\"action\":{\"kind\":\"forage\"},\"say\":null}},\"kind\":\"choice_recorded\"}\n- {\"actor\":\"Lumen\",\"chance\":3,\"cycle\":1,\"detail\":{\"action\":\"forage\",\"action_cost\":2,\"energy_after\":10,\"speech_cost\":0},\"kind\":\"choice_energy_paid\"}\n- {\"actor\":\"Lumen\",\"chance\":3,\"cycle\":1,\"detail\":{\"food_available\":0,\"food_gathered\":0},\"kind\":\"food_foraged\"}\n\nlegal action formats (replace each described field with a valid value):\n- {\"kind\":\"rest\"}\n- {\"kind\":\"forage\"}\n- {\"kind\":\"gather_wood\"}\n- {\"kind\":\"eat\",\"amount\":\"integer 1..2\"}\n- {\"kind\":\"build_shelter\"}\n- {\"kind\":\"give_food\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n- {\"kind\":\"give_wood\",\"target\":[\"Aster\",\"Birch\",\"Cinder\"],\"amount\":\"integer 1..2\"}\n\naction energy costs:\n{\"build_shelter\":2,\"eat\":1,\"forage\":2,\"gather_wood\":2,\"give_food\":1,\"give_wood\":1,\"rest\":0}\n\noptional speech costs 0 energy and is capped at 500 characters. The say value is either null or an object with exactly the keys to and text. The to value must name one living peer or everyone.\n\nresponse JSON schema (your response must validate exactly):\n{\"additionalProperties\":false,\"properties\":{\"action\":{\"oneOf\":[{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"rest\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"forage\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"gather_wood\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"kind\":{\"const\":\"build_shelter\"}},\"required\":[\"kind\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"eat\"}},\"required\":[\"kind\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_food\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"},{\"additionalProperties\":false,\"properties\":{\"amount\":{\"maximum\":2,\"minimum\":1,\"type\":\"integer\"},\"kind\":{\"const\":\"give_wood\"},\"target\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\"],\"type\":\"string\"}},\"required\":[\"kind\",\"target\",\"amount\"],\"type\":\"object\"}]},\"say\":{\"anyOf\":[{\"type\":\"null\"},{\"additionalProperties\":false,\"properties\":{\"text\":{\"maxLength\":500,\"minLength\":1,\"type\":\"string\"},\"to\":{\"enum\":[\"Aster\",\"Birch\",\"Cinder\",\"everyone\"],\"type\":\"string\"}},\"required\":[\"to\",\"text\"],\"type\":\"object\"}]}},\"required\":[\"action\",\"say\"],\"type\":\"object\"}",
+            "role": "user"
+          }
+        ],
+        "model": "nemotron-3.5-lightning-free",
+        "reasoning_effort": "low",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\n  \"action\": {\"kind\": \"forage\"},\n  \"say\": null\n}",
+        "provider_model": "nemotron-3.5-lightning-free",
+        "provider_reported_cost_usd": "0",
+        "request_id": "a2a8b9a90f3653b3-ORD",
+        "usage": {
+          "completion_tokens": 21,
+          "completion_tokens_details": {
+            "audio_tokens": 0,
+            "reasoning_tokens": 0
+          },
+          "prompt_tokens": 1313,
+          "prompt_tokens_details": {
+            "audio_tokens": 0,
+            "cache_write_tokens": 0,
+            "cached_tokens": 0
+          },
+          "total_tokens": 1334
+        }
+      },
+      "seat_id": "seat-004",
+      "sequence": 16,
+      "slot": 4,
+      "status": "succeeded",
+      "validation": {
+        "action_error": null,
+        "speech_error": null
+      }
+    }
+  ],
+  "canonical_result_sha256": "a0b5dd0a36954b0e8c6e15a6880b74a36a24731d66fdd0f680d53e991034f984",
+  "config": {
+    "calibration_scope": "calibrated",
+    "cycles_requested": 1,
+    "days_requested": 1,
+    "max_calls": 16,
+    "max_completion_tokens": 4096,
+    "max_paid_usd": null,
+    "reasoning_effort": "low",
+    "require_complete_budget": true,
+    "seed": 29996,
+    "slots_per_cycle": 4,
+    "temperature": 0.2,
+    "timeout_seconds": 120.0,
+    "world_config": {
+      "build_shelter_energy_cost": 2,
+      "daily_energy_cost": 3,
+      "eat_energy_cost": 1,
+      "exhaustion_energy_penalty": 3,
+      "food_capacity": 12,
+      "food_energy": 5,
+      "food_regeneration": 3,
+      "food_starting_stock": 6,
+      "forage_energy_cost": 2,
+      "forage_max_food": 2,
+      "forage_min_food": 1,
+      "gather_wood_energy_cost": 2,
+      "gather_wood_yield": 2,
+      "give_energy_cost": 1,
+      "max_days": 1,
+      "max_energy": 24,
+      "max_food_eaten": 2,
+      "max_inbox_messages": 28,
+      "max_recent_events": 32,
+      "max_speech_chars": 500,
+      "rest_energy_cost": 0,
+      "shelter_energy_discount": 2,
+      "shelter_wood_cost": 4,
+      "slots_per_cycle": 4,
+      "speech_energy_cost": 0,
+      "starting_energy": 16,
+      "starting_food": 1,
+      "starting_wood": 0,
+      "wood_capacity": 12,
+      "wood_regeneration": 2,
+      "wood_starting_stock": 4
+    },
+    "world_preset": "lean-camp-v1"
+  },
+  "format_version": 2,
+  "metrics": {
+    "deadline_choices_cancelled": 3,
+    "deaths": 0,
+    "food_eaten": 0,
+    "food_foraged": 6,
+    "food_given": 0,
+    "forced_collapses": 3,
+    "living_survivors": 4,
+    "messages_rejected": 0,
+    "messages_sent": 0,
+    "shelters_built": 0,
+    "total_final_energy": 19,
+    "voluntary_rests": 1,
+    "wood_given": 0
+  },
+  "mode": "live_named_survival",
+  "paid_preflight": null,
+  "provider_summary": {
+    "action_validation_errors": 0,
+    "calls_attempted": 16,
+    "calls_failed": 0,
+    "calls_succeeded": 16,
+    "cost_reporting_complete": null,
+    "provider_reported_cost_usd": null,
+    "provider_reported_usage": {
+      "completion_tokens": 361,
+      "prompt_tokens": 20516,
+      "reasoning_tokens": 0,
+      "total_tokens": 20877
+    },
+    "responses_with_validation_errors": 0,
+    "speech_validation_errors": 0,
+    "uncached_calculated_cost_usd": null
+  },
+  "result": {
+    "choice_tape": [
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 1,
+        "view_sha256": "e96eacc9f2037c80696a1c210753bbfdbbfec5461e53bf778317606a7f373c99"
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 1,
+        "view_sha256": "19ba0765c5c92d510e5c25cfef23da7ff812ea68ea53c7711dbee860f873bb30"
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 1,
+        "view_sha256": "560d51533b414f14ff9cb8e7e980ba517b7024c2b19a96fe8720bf9fa70831d1"
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 1,
+        "view_sha256": "4783b69d323ab944e279c61dcb4fbe71f9143c2988a266268fe0c7710e77211a"
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 2,
+        "view_sha256": "3455c253814ff6a6c68a63bbd9de382a4b37640f22fab778c344be0c787ee336"
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 2,
+        "view_sha256": "10ad1681decebbfe7f7ca38bb7269457854784da092434ba6169d3ea0ff1c28e"
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 2,
+        "view_sha256": "32892d0592c0c76df1f99639710aa4724c76e3f7a56c2015e2b7a7af9e61502b"
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 2,
+        "view_sha256": "56213f57a0b7371df5ae5c07ee2d3908995a817a39325c46307282c18236204f"
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 3,
+        "view_sha256": "df2d3a5a3253b0c17629c183463625dcea4ac628623d8a1612c9761341bfac7c"
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 3,
+        "view_sha256": "ab034edb8569e9c00c99011ef23203dd2ce44a9d7aa6e5234d3cb219e85c35e7"
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 3,
+        "view_sha256": "19777708b802b15a129fe9cef7c023879dc112bf4ecb1721e12e7299014dfee4"
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 3,
+        "view_sha256": "c6c6d061417b5e26989cdb6f3987d586af88ece03db6caf616cb9713ae64c6aa"
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 4,
+        "view_sha256": "b28b4d3d087234815d8e49dc0da41d997e6d1f500688e12061b3f3aa8438fca0"
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "rest"
+          },
+          "say": null
+        },
+        "slot": 4,
+        "view_sha256": "f51f41bca9f14382b95868adb29ed36db792287738aa8b3745b35449da3fd90a"
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 4,
+        "view_sha256": "d69471a8f72f12c00beeafad9a8269436f0b32c8e18110d85adcdadd7f15ce53"
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "raw_choice": {
+          "action": {
+            "kind": "forage"
+          },
+          "say": null
+        },
+        "slot": 4,
+        "view_sha256": "9153588c8d25a298dbf362b303cd9a455a84791fce3f8a0badce6a575df2e333"
+      }
+    ],
+    "event_sequence_base": 0,
+    "events": [
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "slots": 4,
+          "survivors": [
+            "Aster",
+            "Birch",
+            "Cinder",
+            "Lumen"
+          ]
+        },
+        "kind": "cycle_started",
+        "sequence": 1,
+        "slot": 0
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "awake": [
+            "Aster",
+            "Birch",
+            "Cinder",
+            "Lumen"
+          ]
+        },
+        "kind": "slot_started",
+        "sequence": 2,
+        "slot": 1
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "e96eacc9f2037c80696a1c210753bbfdbbfec5461e53bf778317606a7f373c99"
+        },
+        "kind": "choice_submitted",
+        "sequence": 3,
+        "slot": 1
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 4,
+        "slot": 1
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "19ba0765c5c92d510e5c25cfef23da7ff812ea68ea53c7711dbee860f873bb30"
+        },
+        "kind": "choice_submitted",
+        "sequence": 5,
+        "slot": 1
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 6,
+        "slot": 1
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "560d51533b414f14ff9cb8e7e980ba517b7024c2b19a96fe8720bf9fa70831d1"
+        },
+        "kind": "choice_submitted",
+        "sequence": 7,
+        "slot": 1
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 8,
+        "slot": 1
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "4783b69d323ab944e279c61dcb4fbe71f9143c2988a266268fe0c7710e77211a"
+        },
+        "kind": "choice_submitted",
+        "sequence": 9,
+        "slot": 1
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 10,
+        "slot": 1
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 14,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 11,
+        "slot": 1
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 14,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 12,
+        "slot": 1
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 14,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 13,
+        "slot": 1
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 14,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 14,
+        "slot": 1
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 1
+        },
+        "kind": "food_foraged",
+        "sequence": 15,
+        "slot": 1
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 1
+        },
+        "kind": "food_foraged",
+        "sequence": 16,
+        "slot": 1
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 2
+        },
+        "kind": "food_foraged",
+        "sequence": 17,
+        "slot": 1
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 2
+        },
+        "kind": "food_foraged",
+        "sequence": 18,
+        "slot": 1
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "awake": [
+            "Aster",
+            "Birch",
+            "Cinder",
+            "Lumen"
+          ]
+        },
+        "kind": "slot_started",
+        "sequence": 19,
+        "slot": 2
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "3455c253814ff6a6c68a63bbd9de382a4b37640f22fab778c344be0c787ee336"
+        },
+        "kind": "choice_submitted",
+        "sequence": 20,
+        "slot": 2
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 21,
+        "slot": 2
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "10ad1681decebbfe7f7ca38bb7269457854784da092434ba6169d3ea0ff1c28e"
+        },
+        "kind": "choice_submitted",
+        "sequence": 22,
+        "slot": 2
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 23,
+        "slot": 2
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "32892d0592c0c76df1f99639710aa4724c76e3f7a56c2015e2b7a7af9e61502b"
+        },
+        "kind": "choice_submitted",
+        "sequence": 24,
+        "slot": 2
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 25,
+        "slot": 2
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "56213f57a0b7371df5ae5c07ee2d3908995a817a39325c46307282c18236204f"
+        },
+        "kind": "choice_submitted",
+        "sequence": 26,
+        "slot": 2
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 27,
+        "slot": 2
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 12,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 28,
+        "slot": 2
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 12,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 29,
+        "slot": 2
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 12,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 30,
+        "slot": 2
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 12,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 31,
+        "slot": 2
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 32,
+        "slot": 2
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 33,
+        "slot": 2
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 34,
+        "slot": 2
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 35,
+        "slot": 2
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "awake": [
+            "Aster",
+            "Birch",
+            "Cinder",
+            "Lumen"
+          ]
+        },
+        "kind": "slot_started",
+        "sequence": 36,
+        "slot": 3
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "df2d3a5a3253b0c17629c183463625dcea4ac628623d8a1612c9761341bfac7c"
+        },
+        "kind": "choice_submitted",
+        "sequence": 37,
+        "slot": 3
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 38,
+        "slot": 3
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "ab034edb8569e9c00c99011ef23203dd2ce44a9d7aa6e5234d3cb219e85c35e7"
+        },
+        "kind": "choice_submitted",
+        "sequence": 39,
+        "slot": 3
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 40,
+        "slot": 3
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "19777708b802b15a129fe9cef7c023879dc112bf4ecb1721e12e7299014dfee4"
+        },
+        "kind": "choice_submitted",
+        "sequence": 41,
+        "slot": 3
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 42,
+        "slot": 3
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "c6c6d061417b5e26989cdb6f3987d586af88ece03db6caf616cb9713ae64c6aa"
+        },
+        "kind": "choice_submitted",
+        "sequence": 43,
+        "slot": 3
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 44,
+        "slot": 3
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 10,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 45,
+        "slot": 3
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 10,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 46,
+        "slot": 3
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 10,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 47,
+        "slot": 3
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "forage",
+          "action_cost": 2,
+          "energy_after": 10,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 48,
+        "slot": 3
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 49,
+        "slot": 3
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 50,
+        "slot": 3
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 51,
+        "slot": 3
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "food_available": 0,
+          "food_gathered": 0
+        },
+        "kind": "food_foraged",
+        "sequence": 52,
+        "slot": 3
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "awake": [
+            "Aster",
+            "Birch",
+            "Cinder",
+            "Lumen"
+          ]
+        },
+        "kind": "slot_started",
+        "sequence": 53,
+        "slot": 4
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "b28b4d3d087234815d8e49dc0da41d997e6d1f500688e12061b3f3aa8438fca0"
+        },
+        "kind": "choice_submitted",
+        "sequence": 54,
+        "slot": 4
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 55,
+        "slot": 4
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "rest"
+            },
+            "say": null
+          },
+          "view_sha256": "f51f41bca9f14382b95868adb29ed36db792287738aa8b3745b35449da3fd90a"
+        },
+        "kind": "choice_submitted",
+        "sequence": 56,
+        "slot": 4
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "rest"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 57,
+        "slot": 4
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "d69471a8f72f12c00beeafad9a8269436f0b32c8e18110d85adcdadd7f15ce53"
+        },
+        "kind": "choice_submitted",
+        "sequence": 58,
+        "slot": 4
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 59,
+        "slot": 4
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "raw_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          },
+          "view_sha256": "9153588c8d25a298dbf362b303cd9a455a84791fce3f8a0badce6a575df2e333"
+        },
+        "kind": "choice_submitted",
+        "sequence": 60,
+        "slot": 4
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "choice_recorded",
+        "sequence": 61,
+        "slot": 4
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "attempted_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "deadline_choice_cancelled",
+        "sequence": 62,
+        "slot": 4
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "attempted_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "deadline_choice_cancelled",
+        "sequence": 63,
+        "slot": 4
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "attempted_choice": {
+            "action": {
+              "kind": "forage"
+            },
+            "say": null
+          }
+        },
+        "kind": "deadline_choice_cancelled",
+        "sequence": 64,
+        "slot": 4
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "action": "rest",
+          "action_cost": 0,
+          "energy_after": 10,
+          "speech_cost": 0
+        },
+        "kind": "choice_energy_paid",
+        "sequence": 65,
+        "slot": 4
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {},
+        "kind": "rest_started",
+        "sequence": 66,
+        "slot": 4
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "energy_after": 7,
+          "energy_penalty": 3
+        },
+        "kind": "forced_collapse",
+        "sequence": 67,
+        "slot": 4
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "energy_after": 7,
+          "energy_penalty": 3
+        },
+        "kind": "forced_collapse",
+        "sequence": 68,
+        "slot": 4
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "energy_after": 7,
+          "energy_penalty": 3
+        },
+        "kind": "forced_collapse",
+        "sequence": 69,
+        "slot": 4
+      },
+      {
+        "actor": "Aster",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "amount": 3,
+          "energy_after": 4
+        },
+        "kind": "cycle_energy_paid",
+        "sequence": 70,
+        "slot": 4
+      },
+      {
+        "actor": "Birch",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "amount": 3,
+          "energy_after": 7
+        },
+        "kind": "cycle_energy_paid",
+        "sequence": 71,
+        "slot": 4
+      },
+      {
+        "actor": "Cinder",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "amount": 3,
+          "energy_after": 4
+        },
+        "kind": "cycle_energy_paid",
+        "sequence": 72,
+        "slot": 4
+      },
+      {
+        "actor": "Lumen",
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "amount": 3,
+          "energy_after": 4
+        },
+        "kind": "cycle_energy_paid",
+        "sequence": 73,
+        "slot": 4
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "resources": {
+            "food": 3,
+            "food_capacity": 12,
+            "wood": 6,
+            "wood_capacity": 12
+          }
+        },
+        "kind": "resources_regenerated",
+        "sequence": 74,
+        "slot": 4
+      },
+      {
+        "actor": null,
+        "cycle": 1,
+        "day": 1,
+        "detail": {
+          "reason": "cycle_limit_reached"
+        },
+        "kind": "world_finished",
+        "sequence": 75,
+        "slot": 4
+      }
+    ],
+    "final_state": {
+      "config": {
+        "build_shelter_energy_cost": 2,
+        "daily_energy_cost": 3,
+        "eat_energy_cost": 1,
+        "exhaustion_energy_penalty": 3,
+        "food_capacity": 12,
+        "food_energy": 5,
+        "food_regeneration": 3,
+        "food_starting_stock": 6,
+        "forage_energy_cost": 2,
+        "forage_max_food": 2,
+        "forage_min_food": 1,
+        "gather_wood_energy_cost": 2,
+        "gather_wood_yield": 2,
+        "give_energy_cost": 1,
+        "max_days": 1,
+        "max_energy": 24,
+        "max_food_eaten": 2,
+        "max_inbox_messages": 28,
+        "max_recent_events": 32,
+        "max_speech_chars": 500,
+        "rest_energy_cost": 0,
+        "shelter_energy_discount": 2,
+        "shelter_wood_cost": 4,
+        "slots_per_cycle": 4,
+        "speech_energy_cost": 0,
+        "starting_energy": 16,
+        "starting_food": 1,
+        "starting_wood": 0,
+        "wood_capacity": 12,
+        "wood_regeneration": 2,
+        "wood_starting_stock": 4
+      },
+      "cycle": 1,
+      "day": 1,
+      "finished_reason": "cycle_limit_reached",
+      "messages": [],
+      "resources": {
+        "food": 3,
+        "food_capacity": 12,
+        "wood": 6,
+        "wood_capacity": 12
+      },
+      "seed": 29996,
+      "slot": 0,
+      "survivors": [
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 4,
+          "food": 2,
+          "last_observed_event_sequence": 53,
+          "name": "Aster",
+          "resting": false,
+          "seat_id": "seat-001",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 7,
+          "food": 3,
+          "last_observed_event_sequence": 53,
+          "name": "Birch",
+          "resting": false,
+          "seat_id": "seat-002",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 4,
+          "food": 2,
+          "last_observed_event_sequence": 53,
+          "name": "Cinder",
+          "resting": false,
+          "seat_id": "seat-003",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 4,
+          "food": 3,
+          "last_observed_event_sequence": 53,
+          "name": "Lumen",
+          "resting": false,
+          "seat_id": "seat-004",
+          "shelter": false,
+          "wood": 0
+        }
+      ]
+    },
+    "initial_state": {
+      "config": {
+        "build_shelter_energy_cost": 2,
+        "daily_energy_cost": 3,
+        "eat_energy_cost": 1,
+        "exhaustion_energy_penalty": 3,
+        "food_capacity": 12,
+        "food_energy": 5,
+        "food_regeneration": 3,
+        "food_starting_stock": 6,
+        "forage_energy_cost": 2,
+        "forage_max_food": 2,
+        "forage_min_food": 1,
+        "gather_wood_energy_cost": 2,
+        "gather_wood_yield": 2,
+        "give_energy_cost": 1,
+        "max_days": 1,
+        "max_energy": 24,
+        "max_food_eaten": 2,
+        "max_inbox_messages": 28,
+        "max_recent_events": 32,
+        "max_speech_chars": 500,
+        "rest_energy_cost": 0,
+        "shelter_energy_discount": 2,
+        "shelter_wood_cost": 4,
+        "slots_per_cycle": 4,
+        "speech_energy_cost": 0,
+        "starting_energy": 16,
+        "starting_food": 1,
+        "starting_wood": 0,
+        "wood_capacity": 12,
+        "wood_regeneration": 2,
+        "wood_starting_stock": 4
+      },
+      "cycle": 0,
+      "day": 0,
+      "event_sequence_offset": 0,
+      "finished_reason": null,
+      "messages": [],
+      "observation_history": [],
+      "resources": {
+        "food": 6,
+        "food_capacity": 12,
+        "wood": 4,
+        "wood_capacity": 12
+      },
+      "seed": 29996,
+      "slot": 0,
+      "survivors": [
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 16,
+          "food": 1,
+          "last_observed_event_sequence": 0,
+          "name": "Aster",
+          "resting": false,
+          "seat_id": "seat-001",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 16,
+          "food": 1,
+          "last_observed_event_sequence": 0,
+          "name": "Birch",
+          "resting": false,
+          "seat_id": "seat-002",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 16,
+          "food": 1,
+          "last_observed_event_sequence": 0,
+          "name": "Cinder",
+          "resting": false,
+          "seat_id": "seat-003",
+          "shelter": false,
+          "wood": 0
+        },
+        {
+          "alive": true,
+          "died_on_day": null,
+          "energy": 16,
+          "food": 1,
+          "last_observed_event_sequence": 0,
+          "name": "Lumen",
+          "resting": false,
+          "seat_id": "seat-004",
+          "shelter": false,
+          "wood": 0
+        }
+      ]
+    }
+  },
+  "seat_assignments": [
+    {
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "public_name": "Aster",
+      "seat_id": "seat-001"
+    },
+    {
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "public_name": "Birch",
+      "seat_id": "seat-002"
+    },
+    {
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "public_name": "Cinder",
+      "seat_id": "seat-003"
+    },
+    {
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "public_name": "Lumen",
+      "seat_id": "seat-004"
+    }
+  ],
+  "source": {
+    "calibration_sha256": "7c57239a91c20e6894993509a88fbe84821b13206c1fa19e5e8816c954aad7ad",
+    "cli_sha256": "5ceb54060744ce48bb905fef90808d30c805856374853ec245c6b24327b63d60",
+    "demo_sha256": "22e89f1f392b08b66fcd7ee14613753ff386edb6fd1754edb8d21acbd43b153c",
+    "engine_sha256": "55c3b62d52f6fa2c660bb2ef7eec979a3390e725b32a822131fc22ee85c962b2",
+    "model_host_sha256": "6294e5e7e8ba32481e2dca650b75d2ab188cf291983cb08c1bc1a3c4b083eb26",
+    "models_sha256": "b98c87607fd19717429d291a139361817f0197146a85d3cc0129db8c03c916db",
+    "platform_system": "Windows",
+    "prompt_sha256": "a006efde55eb612172dcf7863bbd0f8ed3bfdc0d2a6676af97a64e59839dee5b",
+    "protocol_sha256": "766949a49c8f716d7caf47f89be16b58f140f35f4897dd6644f79b3dc7b1053f",
+    "python_version": "3.11.9",
+    "world_sim_version": "0.5.1"
+  },
+  "status": "completed"
+}

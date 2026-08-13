@@ -2,57 +2,31 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Sequence
 
-from .engine import SurvivalChoiceProvider, make_survival_world, run_survival
-from .models import DEFAULT_SURVIVOR_NAMES, SurvivalConfig, SurvivalResult, SurvivorView
-
-
-@dataclass(frozen=True)
-class ReferenceSurvivorPolicy(SurvivalChoiceProvider):
-    announce_on_day_one: bool = True
-
-    def decide(self, view: SurvivorView) -> Mapping[str, object]:
-        state = view.self_state
-        energy = int(state["energy"])
-        food = int(state["food"])
-        wood = int(state["wood"])
-        shelter = bool(state["shelter"])
-        action: dict[str, object]
-        cycle_cost = int(view.rules["cycle_energy_cost_after_rest"])
-        if view.slots_remaining == 1 or energy <= cycle_cost + 2:
-            action = {"kind": "rest"}
-        elif energy <= 9 and food > 0:
-            action = {"kind": "eat", "amount": min(2, food)}
-        elif energy <= 9 and food == 0:
-            action = {"kind": "forage"}
-        elif (
-            not shelter and wood >= int(view.rules["shelter_wood_cost"]) and energy >= 7
-        ):
-            action = {"kind": "build_shelter"}
-        elif not shelter and wood < int(view.rules["shelter_wood_cost"]) and energy > 6:
-            action = {"kind": "gather_wood"}
-        else:
-            action = {"kind": "forage"}
-        say: dict[str, str] | None = None
-        if self.announce_on_day_one and view.day == 1 and view.slot == 1:
-            say = {"to": "everyone", "text": "I am gathering what I need to survive."}
-        return {"action": action, "say": say}
+from .calibration import (
+    CALIBRATION_NAMES,
+    ChattyFoodFirstPolicy,
+    LEAN_CAMP_V1,
+    survival_preset,
+)
+from .engine import make_survival_world, run_survival
+from .models import SurvivalResult
 
 
 def run_survival_demo(
     *,
     seed: int = 17,
     days: int = 10,
-    names: Sequence[str] = DEFAULT_SURVIVOR_NAMES,
+    names: Sequence[str] = CALIBRATION_NAMES,
+    preset: str = LEAN_CAMP_V1,
 ) -> SurvivalResult:
     if days < 1:
-        raise ValueError("days must be positive")
+        raise ValueError("cycles must be positive")
     clean_names = tuple(name.strip() for name in names)
-    config = SurvivalConfig(max_days=days)
+    config = survival_preset(preset, cycles=days, population=len(clean_names))
     world = make_survival_world(clean_names, seed=seed, config=config)
-    providers = {name: ReferenceSurvivorPolicy() for name in clean_names}
+    providers = {name: ChattyFoodFirstPolicy() for name in clean_names}
     return run_survival(world, providers, days=days)
 
 

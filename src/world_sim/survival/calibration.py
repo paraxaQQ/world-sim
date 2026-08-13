@@ -20,6 +20,7 @@ from .models import SurvivalConfig, SurvivalResult, SurvivorView
 
 LEAN_CAMP_V1 = "lean-camp-v1"
 CALIBRATION_NAMES: tuple[str, ...] = ("Aster", "Birch", "Cinder", "Lumen")
+LEAN_CAMP_V1_POPULATION = len(CALIBRATION_NAMES)
 CALIBRATION_POLICIES: tuple[str, ...] = (
     "rest_only",
     "food_first",
@@ -66,11 +67,14 @@ def survival_preset(
     name: str,
     *,
     cycles: int = DEFAULT_CALIBRATION_CYCLES,
+    population: int = LEAN_CAMP_V1_POPULATION,
 ) -> SurvivalConfig:
     if cycles < 1:
         raise ValueError("calibration cycles must be positive")
     if name != LEAN_CAMP_V1:
         raise ValueError(f"unknown survival calibration preset {name!r}")
+    if population != LEAN_CAMP_V1_POPULATION:
+        raise ValueError("lean-camp-v1 requires exactly four survivors")
     return replace(_LEAN_CAMP_V1_CONFIG, max_days=cycles)
 
 
