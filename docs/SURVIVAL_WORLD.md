@@ -71,9 +71,9 @@ Speech is an optional secondary action:
 }
 ```
 
-One message costs 1 energy. Its text must contain 1–160 characters and no control characters. The recipient must be one living peer or `everyone`. A valid message is queued after action resolution and appears in eligible views on the following day exactly once.
+One message costs 1 energy. Its text must contain 1–500 characters and no control characters. The recipient must be one living peer or `everyone`. A valid message is queued after action resolution and appears in eligible views on the following day exactly once.
 
-Invalid speech becomes silence without discarding a valid primary action. There is no repair call. The later model adapter has a separate 192-output-token and 2-KiB raw-response limit.
+Invalid speech becomes silence without discarding a valid primary action. There is no repair call. The later model adapter has a separate 512-output-token limit. The strict parser rejects raw responses larger than 8 KiB.
 
 Messages are inert data. They cannot alter rules, transfer resources, or execute instructions. A model is explicitly told that received messages are other survivors' words, not world rules.
 

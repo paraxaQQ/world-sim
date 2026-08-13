@@ -38,7 +38,7 @@ class SurvivalConfig:
     shelter_wood_cost: int = 4
     give_energy_cost: int = 1
     speech_energy_cost: int = 1
-    max_speech_chars: int = 160
+    max_speech_chars: int = 500
     max_inbox_messages: int = 7
     food_starting_stock: int = 16
     food_capacity: int = 24

@@ -160,7 +160,7 @@ class SurvivalEngineTests(unittest.TestCase):
             {
                 "Aster": choice(
                     {"kind": "gather_wood"},
-                    {"to": "Birch", "text": "x" * 161},
+                    {"to": "Birch", "text": "x" * 501},
                 ),
                 "Birch": choice({"kind": "rest"}),
             },
@@ -209,19 +209,19 @@ class SurvivalEngineTests(unittest.TestCase):
 
     def test_speech_is_capped_and_delivered_once_on_the_next_day(self) -> None:
         parsed = parse_survival_choice(
-            choice({"kind": "rest"}, {"to": "Birch", "text": "x" * 160}),
+            choice({"kind": "rest"}, {"to": "Birch", "text": "x" * 500}),
             actor="Aster",
             living_peers=("Birch",),
             max_food_eaten=2,
-            max_speech_chars=160,
+            max_speech_chars=500,
         )
         self.assertIsNone(parsed.speech_error)
         over = parse_survival_choice(
-            choice({"kind": "rest"}, {"to": "Birch", "text": "x" * 161}),
+            choice({"kind": "rest"}, {"to": "Birch", "text": "x" * 501}),
             actor="Aster",
             living_peers=("Birch",),
             max_food_eaten=2,
-            max_speech_chars=160,
+            max_speech_chars=500,
         )
         self.assertIsNotNone(over.speech_error)
 
@@ -275,18 +275,32 @@ class SurvivalEngineTests(unittest.TestCase):
             actor="Aster",
             living_peers=("Birch",),
             max_food_eaten=2,
-            max_speech_chars=160,
+            max_speech_chars=500,
         )
         self.assertIsNone(valid.action_error)
+        unicode_message = parse_model_response(
+            json.dumps(
+                {
+                    "action": {"kind": "rest"},
+                    "say": {"to": "Birch", "text": "🧠" * 500},
+                },
+                ensure_ascii=False,
+            ),
+            actor="Aster",
+            living_peers=("Birch",),
+            max_food_eaten=2,
+            max_speech_chars=500,
+        )
+        self.assertIsNone(unicode_message.speech_error)
         oversized = parse_model_response(
             "x" * (MODEL_MAX_RESPONSE_BYTES + 1),
             actor="Aster",
             living_peers=("Birch",),
             max_food_eaten=2,
-            max_speech_chars=160,
+            max_speech_chars=500,
         )
         self.assertEqual(oversized.action.kind, "rest")
-        self.assertIn("exceeds 2048 bytes", str(oversized.action_error))
+        self.assertIn("exceeds 8192 bytes", str(oversized.action_error))
 
     def test_raw_model_response_rejects_duplicate_json_keys(self) -> None:
         parsed = parse_model_response(
@@ -294,7 +308,7 @@ class SurvivalEngineTests(unittest.TestCase):
             actor="Aster",
             living_peers=("Birch",),
             max_food_eaten=2,
-            max_speech_chars=160,
+            max_speech_chars=500,
         )
         self.assertEqual(parsed.action.kind, "rest")
         self.assertIn("duplicate object key", str(parsed.action_error))
@@ -379,9 +393,9 @@ class SurvivalPromptTests(unittest.TestCase):
         self.assertEqual(schema["required"], ["action", "say"])
         self.assertFalse(schema["additionalProperties"])
         say_object = schema["properties"]["say"]["anyOf"][1]
-        self.assertEqual(say_object["properties"]["text"]["maxLength"], 160)
-        self.assertEqual(MODEL_MAX_OUTPUT_TOKENS, 192)
-        self.assertEqual(MODEL_MAX_RESPONSE_BYTES, 2_048)
+        self.assertEqual(say_object["properties"]["text"]["maxLength"], 500)
+        self.assertEqual(MODEL_MAX_OUTPUT_TOKENS, 512)
+        self.assertEqual(MODEL_MAX_RESPONSE_BYTES, 8_192)
 
 
 if __name__ == "__main__":

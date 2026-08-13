@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 
-MODEL_MAX_OUTPUT_TOKENS = 192
-MODEL_MAX_RESPONSE_BYTES = 2_048
+MODEL_MAX_OUTPUT_TOKENS = 512
+MODEL_MAX_RESPONSE_BYTES = 8_192
 
 
 @dataclass(frozen=True)

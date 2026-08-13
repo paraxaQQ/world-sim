@@ -26,7 +26,7 @@ py -3.11 -m world_sim survive `
 Its canonical result SHA-256 was:
 
 ```text
-e4b1de1b1ba7ff508ecc7157ce414e0adefa34892588540eca4b9ad8789a0e87
+164f771746075f94d37ae399bb394637a2c6d8289f29e2866fd2bc93fca21c55
 ```
 
 Objective summary:

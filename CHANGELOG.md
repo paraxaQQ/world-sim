@@ -1,5 +1,11 @@
 # changelog
 
+## 0.3.1 - 2026-08-12
+
+- raise the per-message world limit from 160 to 500 characters.
+- raise the future adapter output ceiling from 192 to 512 tokens.
+- raise the strict raw-response ceiling from 2 KiB to 8 KiB so valid Unicode messages fit inside the transport boundary.
+
 ## 0.3.0 - 2026-08-12
 
 - add a deterministic named-survivor ecology with energy, food, wood, shelter, transfers, permanent death, and opaque resolution seats.

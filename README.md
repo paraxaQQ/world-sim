@@ -20,7 +20,7 @@ end energy = start energy - action cost - speech cost
 ```
 
 - every primary action costs energy
-- one optional spoken message costs 1 energy and is capped at 160 characters
+- one optional spoken message costs 1 energy and is capped at 500 characters
 - food is the only action result that restores energy
 - shelter lowers nightly metabolism from 2 energy to 1; it never makes living free
 - energy at or below 0 means permanent death
@@ -83,7 +83,7 @@ The model-facing protocol is already closed:
 
 The root keys must be exactly `action` and `say`. `say` may be `null`. Invalid action and speech components are handled independently: a malformed action becomes a paid `rest`, while malformed speech becomes silence. Neither failure earns a free retry.
 
-The model-response parser rejects duplicate JSON keys and raw responses larger than 2 KiB. The future adapter must request at most 192 output tokens. The world independently enforces the 160-character speech limit. No API adapter or real key is connected yet.
+The model-response parser rejects duplicate JSON keys and raw responses larger than 8 KiB. The future adapter must request at most 512 output tokens. The world independently enforces the 500-character speech limit. No API adapter or real key is connected yet.
 
 ## repository map
 
