@@ -96,7 +96,7 @@ The paid allowlist is `deepseek-v4-flash`, `minimax-m3`, `kimi-k2.6`, and `glm-5
 
 This is a local preflight, not a provider-side dollar guarantee. Zen reports cost after a billable request, and prices or token accounting can change. When the ceiling must also exist on the provider side, use a Zen workspace or member limit.
 
-The next command can make at most four billable requests. Put a fresh Zen key on the clipboard first:
+The first paid attempt used the command below. It made one billable DeepSeek request, exhausted the 1,024-token completion budget, and stopped before contacting the other models. Do not rerun it unchanged. See [the retained failure receipt](outputs/v0.4.3-paid-live-smoke-attempt.md).
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -122,7 +122,7 @@ try {
 }
 ```
 
-`--reasoning-effort low` records a compatibility request, not a common reasoning treatment. The free and Go profiles send that field directly. The paid profiles pass it only to DeepSeek and GLM, disable Kimi's long-thinking mode under the 1,024-token smoke cap, and omit MiniMax's unsupported field. Each `calls[].request` object is the exact audit record. Do not compare private reasoning across these four profiles from this smoke run.
+`--reasoning-effort low` records a compatibility request, not a common reasoning treatment. The free and Go profiles send that field directly. The paid profiles pass it only to DeepSeek and GLM, disable Kimi's long-thinking mode under the 1,024-token smoke cap, and omit MiniMax's unsupported field. DeepSeek and GLM currently map `low` to a higher reasoning tier, so the flag does not create comparable budgets. Each `calls[].request` object is the exact audit record.
 
 ## model boundary
 
