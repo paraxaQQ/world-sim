@@ -124,6 +124,46 @@ class FakeTransport(ChatTransport):
 
 
 class PaidQualificationTests(unittest.TestCase):
+    def test_survival_cli_closes_the_reservation_before_atomic_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "survival.json"
+            final = {
+                "mode": "live_named_survival",
+                "status": "completed",
+                "calls": [],
+                "canonical_result_sha256": "result-hash",
+                "metrics": {},
+                "provider_summary": {},
+                "result": {
+                    "final_state": {
+                        "cycle": 1,
+                        "finished_reason": "cycle_limit_reached",
+                    }
+                },
+            }
+
+            def fake_run(**kwargs: object) -> dict[str, object]:
+                checkpoint = kwargs["checkpoint"]
+                checkpoint({**final, "status": "running"})
+                checkpoint(final)
+                return final
+
+            arguments = ["survive-live"]
+            for model in (
+                "opencode/alpha-free",
+                "opencode/beta-free",
+                "opencode/gamma-free",
+                "opencode/delta-free",
+            ):
+                arguments.extend(("--model", model))
+            arguments.extend(("--output", str(output)))
+            with patch("world_sim.cli.run_live_survival", fake_run):
+                with redirect_stdout(StringIO()):
+                    exit_code = main(arguments)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), final)
+
     def test_cli_closes_the_reservation_before_atomic_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "qualification.json"

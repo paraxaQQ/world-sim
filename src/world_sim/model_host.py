@@ -29,7 +29,7 @@ from .survival.protocol import (
 
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.8.0"
+WORLD_SIM_VERSION = "0.8.1"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -309,6 +309,7 @@ class _LiveProvider(SurvivalChoiceProvider):
     max_calls: int
     calls: list[dict[str, Any]]
     paid_budget: _PaidBudget | None
+    checkpoint: Callable[[], None] | None
 
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
         if view.name != self.assignment.public_name:
@@ -336,6 +337,7 @@ class _LiveProvider(SurvivalChoiceProvider):
                     public_name=self.assignment.public_name,
                     authorization=cost_authorization,
                 )
+        self._checkpoint_in_flight(view, request, cost_authorization)
         try:
             response = self.transport.post(
                 self.assignment.endpoint,
@@ -503,6 +505,27 @@ class _LiveProvider(SurvivalChoiceProvider):
 
     def _record(self, record: dict[str, Any]) -> None:
         self.calls.append(record)
+        if self.checkpoint is not None:
+            self.checkpoint()
+
+    def _checkpoint_in_flight(
+        self,
+        view: SurvivorView,
+        request: Mapping[str, object],
+        cost_authorization: Mapping[str, str | int] | None,
+    ) -> None:
+        if self.checkpoint is None:
+            return
+        self.calls.append(
+            {
+                **self._base_record(view, request, cost_authorization),
+                "status": "in_flight",
+            }
+        )
+        try:
+            self.checkpoint()
+        finally:
+            self.calls.pop()
 
 
 def run_live_survival(
@@ -521,6 +544,7 @@ def run_live_survival(
     transport: ChatTransport | None = None,
     auth_path: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    checkpoint: Callable[[Mapping[str, object]], None] | None = None,
 ) -> dict[str, Any]:
     assignments = _assign_models(model_refs)
     world_config = survival_preset(
@@ -582,29 +606,6 @@ def run_live_survival(
     calls: list[dict[str, Any]] = []
     paid_budget = _PaidBudget(paid_limit) if paid_limit is not None else None
     active_transport = transport or StdlibChatTransport()
-    providers = {
-        assignment.public_name: _LiveProvider(
-            assignment=assignment,
-            transport=active_transport,
-            api_key=(
-                go_key if assignment.endpoint.provider == "opencode-go" else zen_key
-            ),
-            timeout_seconds=timeout_seconds,
-            max_completion_tokens=max_completion_tokens,
-            temperature=temperature,
-            reasoning_effort=(
-                None if reasoning_effort == "provider-default" else reasoning_effort
-            ),
-            max_calls=max_calls,
-            calls=calls,
-            paid_budget=(
-                paid_budget
-                if assignment.endpoint.provider == "opencode-paid"
-                else None
-            ),
-        )
-        for assignment in assignments
-    }
     world = make_survival_world(
         tuple(assignment.public_name for assignment in assignments),
         seed=seed,
@@ -674,80 +675,132 @@ def run_live_survival(
         "calls": calls,
     }
     initial_state = world.to_dict(include_events=False)
+
+    def running_artifact() -> dict[str, Any]:
+        return {
+            **base,
+            "status": "running",
+            "initial_state": initial_state,
+            "partial_state": world.to_dict(),
+            "provider_summary": _provider_summary(calls),
+        }
+
+    def checkpoint_running() -> None:
+        if checkpoint is not None:
+            checkpoint(running_artifact())
+
+    def finish(payload: dict[str, Any]) -> dict[str, Any]:
+        if checkpoint is not None:
+            checkpoint(payload)
+        return payload
+
+    providers = {
+        assignment.public_name: _LiveProvider(
+            assignment=assignment,
+            transport=active_transport,
+            api_key=(
+                go_key if assignment.endpoint.provider == "opencode-go" else zen_key
+            ),
+            timeout_seconds=timeout_seconds,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            reasoning_effort=(
+                None if reasoning_effort == "provider-default" else reasoning_effort
+            ),
+            max_calls=max_calls,
+            calls=calls,
+            paid_budget=(
+                paid_budget
+                if assignment.endpoint.provider == "opencode-paid"
+                else None
+            ),
+            checkpoint=checkpoint_running if checkpoint is not None else None,
+        )
+        for assignment in assignments
+    }
+    checkpoint_running()
     try:
         result = run_survival(world, providers, days=days)
     except RuntimeError as error:
         if isinstance(error.__cause__, LivePaidBudgetFailure):
             failure = error.__cause__
-            return {
-                **base,
-                "status": "failed",
-                "failure": {
-                    "call_sequence": None,
-                    "day": failure.view.day,
-                    "cycle": failure.view.day,
-                    "slot": failure.view.slot,
-                    "seat_id": world.survivors[failure.public_name].seat_id,
-                    "public_name": failure.public_name,
-                    "model": providers[failure.public_name].assignment.model_ref,
-                    "kind": "paid_budget_exhausted",
-                    "message": str(failure),
-                    "http_status": None,
-                    "cost_authorization": failure.authorization,
-                },
-                "initial_state": initial_state,
-                "partial_state": world.to_dict(),
-                "provider_summary": _provider_summary(calls),
-            }
+            return finish(
+                {
+                    **base,
+                    "status": "failed",
+                    "failure": {
+                        "call_sequence": None,
+                        "day": failure.view.day,
+                        "cycle": failure.view.day,
+                        "slot": failure.view.slot,
+                        "seat_id": world.survivors[failure.public_name].seat_id,
+                        "public_name": failure.public_name,
+                        "model": providers[failure.public_name].assignment.model_ref,
+                        "kind": "paid_budget_exhausted",
+                        "message": str(failure),
+                        "http_status": None,
+                        "cost_authorization": failure.authorization,
+                    },
+                    "initial_state": initial_state,
+                    "partial_state": world.to_dict(),
+                    "provider_summary": _provider_summary(calls),
+                }
+            )
         if isinstance(error.__cause__, LiveCallCapFailure):
             failure = error.__cause__
-            return {
-                **base,
-                "status": "failed",
-                "failure": {
-                    "call_sequence": None,
-                    "day": failure.view.day,
-                    "cycle": failure.view.day,
-                    "slot": failure.view.slot,
-                    "seat_id": world.survivors[failure.public_name].seat_id,
-                    "public_name": failure.public_name,
-                    "model": providers[failure.public_name].assignment.model_ref,
-                    "kind": "call_cap_reached",
-                    "message": str(failure),
-                    "http_status": None,
-                },
-                "initial_state": initial_state,
-                "partial_state": world.to_dict(),
-                "provider_summary": _provider_summary(calls),
-            }
+            return finish(
+                {
+                    **base,
+                    "status": "failed",
+                    "failure": {
+                        "call_sequence": None,
+                        "day": failure.view.day,
+                        "cycle": failure.view.day,
+                        "slot": failure.view.slot,
+                        "seat_id": world.survivors[failure.public_name].seat_id,
+                        "public_name": failure.public_name,
+                        "model": providers[failure.public_name].assignment.model_ref,
+                        "kind": "call_cap_reached",
+                        "message": str(failure),
+                        "http_status": None,
+                    },
+                    "initial_state": initial_state,
+                    "partial_state": world.to_dict(),
+                    "provider_summary": _provider_summary(calls),
+                }
+            )
         if not isinstance(error.__cause__, LiveCallFailure):
             raise
         failed = calls[-1]
-        return {
+        return finish(
+            {
+                **base,
+                "status": "failed",
+                "failure": {
+                    "call_sequence": failed["sequence"],
+                    "day": failed["day"],
+                    "cycle": failed["cycle"],
+                    "slot": failed["slot"],
+                    "seat_id": failed["seat_id"],
+                    "public_name": failed["public_name"],
+                    "model": failed["model"],
+                    **failed["error"],
+                },
+                "initial_state": initial_state,
+                "partial_state": world.to_dict(),
+                "provider_summary": _provider_summary(calls),
+            }
+        )
+    return finish(
+        {
             **base,
-            "status": "failed",
-            "failure": {
-                "call_sequence": failed["sequence"],
-                "day": failed["day"],
-                "cycle": failed["cycle"],
-                "slot": failed["slot"],
-                "seat_id": failed["seat_id"],
-                "public_name": failed["public_name"],
-                "model": failed["model"],
-                **failed["error"],
-            },
-            "initial_state": initial_state,
-            "partial_state": world.to_dict(),
+            "status": "completed",
+            "canonical_result_sha256": result_sha256(result),
+            "metrics": survival_metrics(result),
             "provider_summary": _provider_summary(calls),
+            "result": result.to_dict(),
         }
-    return {
-        **base,
-        "status": "completed",
-        "canonical_result_sha256": result_sha256(result),
-        "metrics": survival_metrics(result),
-        "provider_summary": _provider_summary(calls),
-        "result": result.to_dict(),
-    }
+    )
 
 
 def run_paid_adapter_qualification(
@@ -1812,6 +1865,7 @@ def _paid_error_cost_receipt(
 
 def _provider_summary(calls: Sequence[Mapping[str, Any]]) -> dict[str, object]:
     succeeded = [call for call in calls if call.get("status") == "succeeded"]
+    failed = [call for call in calls if call.get("status") == "failed"]
     paid = [
         call
         for call in calls
@@ -1821,7 +1875,7 @@ def _provider_summary(calls: Sequence[Mapping[str, Any]]) -> dict[str, object]:
     return {
         "calls_attempted": len(calls),
         "calls_succeeded": len(succeeded),
-        "calls_failed": len(calls) - len(succeeded),
+        "calls_failed": len(failed),
         "responses_with_validation_errors": sum(
             any(validation.values())
             for call in succeeded

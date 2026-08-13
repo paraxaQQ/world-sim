@@ -391,6 +391,90 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(original.to_dict(), replay_survival(original).to_dict())
         self.assertEqual(len(transport.requests), 12)
 
+    def test_live_survival_checkpoints_before_and_after_every_transport(self) -> None:
+        transport = FakeTransport([response(REST_REPLY) for _ in FREE_MODELS])
+        checkpoints: list[dict[str, object]] = []
+
+        artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            days=1,
+            max_calls=4,
+            transport=transport,
+            environ={},
+            checkpoint=lambda current: checkpoints.append(
+                deepcopy(dict(current))
+            ),
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(len(checkpoints), 10)
+        self.assertEqual(checkpoints[0]["status"], "running")
+        self.assertEqual(checkpoints[0]["calls"], [])
+        self.assertEqual(checkpoints[-1], artifact)
+        in_flight = [
+            current
+            for current in checkpoints
+            if any(call["status"] == "in_flight" for call in current["calls"])
+        ]
+        self.assertEqual(len(in_flight), 4)
+        self.assertEqual(
+            [current["calls"][-1]["sequence"] for current in in_flight],
+            [1, 2, 3, 4],
+        )
+        self.assertTrue(
+            all(
+                current["provider_summary"]["calls_failed"] == 0
+                for current in in_flight
+            )
+        )
+
+    def test_in_flight_checkpoint_failure_aborts_before_transport(self) -> None:
+        transport = FakeTransport([response(REST_REPLY)])
+        checkpoint_count = 0
+
+        def checkpoint(_: Mapping[str, object]) -> None:
+            nonlocal checkpoint_count
+            checkpoint_count += 1
+            if checkpoint_count == 2:
+                raise OSError("checkpoint failed")
+
+        with self.assertRaises(RuntimeError) as captured:
+            run_live_survival(
+                model_refs=FREE_MODELS,
+                days=1,
+                max_calls=4,
+                transport=transport,
+                environ={},
+                checkpoint=checkpoint,
+            )
+
+        self.assertIsInstance(captured.exception.__cause__, OSError)
+        self.assertEqual(transport.requests, [])
+
+    def test_post_transport_checkpoint_failure_does_not_retry(self) -> None:
+        transport = FakeTransport([response(REST_REPLY)])
+        checkpoints: list[dict[str, object]] = []
+
+        def checkpoint(current: Mapping[str, object]) -> None:
+            checkpoints.append(deepcopy(dict(current)))
+            if len(checkpoints) == 3:
+                raise OSError("checkpoint failed")
+
+        with self.assertRaises(RuntimeError) as captured:
+            run_live_survival(
+                model_refs=FREE_MODELS,
+                days=1,
+                max_calls=4,
+                transport=transport,
+                environ={},
+                checkpoint=checkpoint,
+            )
+
+        self.assertIsInstance(captured.exception.__cause__, OSError)
+        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(checkpoints[1]["calls"][-1]["status"], "in_flight")
+        self.assertEqual(checkpoints[2]["calls"][-1]["status"], "succeeded")
+
     def test_live_world_uses_and_records_the_calibrated_preset(self) -> None:
         raw = REST_REPLY
         transport = FakeTransport([response(raw) for _ in FREE_MODELS])
@@ -409,7 +493,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.1")
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -761,7 +845,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.1")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -1460,12 +1544,16 @@ class ModelHostTests(unittest.TestCase):
         for provider_response, expected_kind in cases:
             with self.subTest(expected_kind):
                 transport = FakeTransport([provider_response])
+                checkpoints: list[dict[str, object]] = []
                 artifact = run_live_survival(
                     model_refs=FREE_MODELS,
                     days=1,
                     max_calls=4,
                     transport=transport,
                     environ={},
+                    checkpoint=lambda current: checkpoints.append(
+                        deepcopy(dict(current))
+                    ),
                 )
                 self.assertEqual(artifact["status"], "failed")
                 self.assertEqual(artifact["failure"]["kind"], expected_kind)
@@ -1477,6 +1565,16 @@ class ModelHostTests(unittest.TestCase):
                 self.assertEqual(receipt["body_bytes"], len(provider_response.body.encode()))
                 self.assertEqual(len(receipt["body_sha256"]), 64)
                 self.assertEqual(len(transport.requests), 1)
+                self.assertEqual(
+                    [
+                        current["calls"][-1]["status"]
+                        if current["calls"]
+                        else "empty"
+                        for current in checkpoints
+                    ],
+                    ["empty", "in_flight", "failed", "failed"],
+                )
+                self.assertEqual(checkpoints[-1], artifact)
 
     def test_call_cap_fails_before_credentials_or_transport(self) -> None:
         transport = FakeTransport([])

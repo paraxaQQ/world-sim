@@ -1,5 +1,12 @@
 # changelog
 
+## 0.8.1 - 2026-08-13
+
+- atomically checkpoint live survival artifacts before and after every provider call
+- retain an explicit `in_flight` call receipt if the process stops during transport
+- close the Windows reservation handle before atomic replacement
+- keep final completed and failed artifact shapes unchanged
+
 ## 0.6.0 - 2026-08-13
 
 - allow up to 16 calls in one paid observation cycle under a cumulative runtime ceiling

@@ -172,9 +172,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(f"live output already exists: {args.output}")
         except OSError as error:
             parser.error(f"cannot reserve live output: {error}")
-        if args.command == "qualify-live":
-            live_output.close()
-            live_output = None
+        live_output.close()
+        live_output = None
     exit_code = 0
     if args.command == "survive":
         result = run_survival_demo(
@@ -207,15 +206,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
                 world_preset=args.preset,
                 require_complete_budget=args.require_complete_budget,
+                checkpoint=lambda current: _replace_reserved_live_output(
+                    args.output, current
+                ),
             )
         except ValueError as error:
-            assert live_output is not None
-            live_output.close()
-            args.output.unlink()
+            if _is_reserved_live_output(args.output):
+                args.output.unlink()
             parser.error(str(error))
-        assert live_output is not None
-        _write_reserved_live_output(live_output, payload)
-        live_output = None
         if payload["status"] == "completed":
             result_payload = payload["result"]
             summary = {
