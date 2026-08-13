@@ -11,6 +11,8 @@ from typing import Any, Protocol
 
 from .models import (
     DEFAULT_SURVIVOR_NAMES,
+    GLOBAL_BEATS_V2,
+    SLOTS_V1,
     PriorPublicRecord,
     PriorPublicStatement,
     ResourcePool,
@@ -21,6 +23,7 @@ from .models import (
     SurvivalWorld,
     Survivor,
     SurvivorView,
+    validate_interaction_protocol,
 )
 from .protocol import (
     ParsedSurvivalChoice,
@@ -45,8 +48,10 @@ def make_survival_world(
     *,
     seed: int,
     config: SurvivalConfig | None = None,
+    interaction_protocol: str = GLOBAL_BEATS_V2,
 ) -> SurvivalWorld:
     active_config = config or SurvivalConfig()
+    active_protocol = validate_interaction_protocol(interaction_protocol)
     clean_names = tuple(name.strip() for name in names)
     if len(clean_names) < 2:
         raise ValueError("a survival world needs at least two named survivors")
@@ -85,6 +90,7 @@ def make_survival_world(
             wood=active_config.wood_starting_stock,
             wood_capacity=active_config.wood_capacity,
         ),
+        interaction_protocol=active_protocol,
     )
 
 
@@ -92,6 +98,7 @@ def continue_survival_world(
     parent: SurvivalResult,
     *,
     additional_cycles: int = 1,
+    interaction_protocol: str | None = None,
 ) -> SurvivalWorld:
     if isinstance(additional_cycles, bool) or not isinstance(
         additional_cycles, int
@@ -141,6 +148,12 @@ def continue_survival_world(
     snapshot["observation_history"] = history
     snapshot["event_sequence_offset"] = event_sequence_offset
     snapshot.pop("prior_public_record", None)
+    if interaction_protocol is not None:
+        active_protocol = validate_interaction_protocol(interaction_protocol)
+        if active_protocol == SLOTS_V1:
+            snapshot.pop("interaction_protocol", None)
+        else:
+            snapshot["interaction_protocol"] = active_protocol
     world = _world_from_snapshot(
         snapshot,
         event_sequence_offset=event_sequence_offset,
@@ -248,6 +261,9 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
         limit=world.config.max_recent_events,
     )
     config = world.config
+    action_energy_costs = config.action_energy_costs
+    if world.interaction_protocol == GLOBAL_BEATS_V2:
+        action_energy_costs = {**action_energy_costs, "wait": 0}
     return SurvivorView(
         name=name,
         day=cycle,
@@ -267,7 +283,7 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
             "slots_remaining": config.slots_per_cycle - slot + 1,
             "final_slot_requires_rest": True,
             "exhaustion_energy_penalty": config.exhaustion_energy_penalty,
-            "action_energy_costs": config.action_energy_costs,
+            "action_energy_costs": action_energy_costs,
             "forage_food_range": [
                 config.forage_min_food,
                 config.forage_max_food,
@@ -286,8 +302,10 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
         allowed_actions=allowed_survival_actions(
             living_peers=living_peers,
             max_food_eaten=config.max_food_eaten,
+            interaction_protocol=world.interaction_protocol,
         ),
         prior_public_record=world.prior_public_record,
+        interaction_protocol=world.interaction_protocol,
     )
 
 
@@ -553,6 +571,7 @@ def _run_slot(
             living_peers=peers,
             max_food_eaten=world.config.max_food_eaten,
             max_speech_chars=world.config.max_speech_chars,
+            interaction_protocol=world.interaction_protocol,
         )
         parsed[survivor.name] = choice
         _emit(
@@ -609,6 +628,7 @@ def _run_slot(
         for survivor in active
         if parsed[survivor.name].action_error is None
     ]
+    _resolve_wait(world, cycle, slot, valid_action, parsed)
     _resolve_forage(world, cycle, slot, valid_action, parsed)
     _resolve_wood_gathering(world, cycle, slot, valid_action, parsed)
     _resolve_gifts(world, cycle, slot, valid_action, parsed)
@@ -627,7 +647,13 @@ def _charge_choice_costs(
     for survivor in survivors:
         choice = parsed[survivor.name]
         action_cost = (
-            costs[choice.action.kind] if choice.action_error is None else 0
+            (
+                0
+                if choice.action.kind == "wait"
+                else costs[choice.action.kind]
+            )
+            if choice.action_error is None
+            else 0
         )
         speech_cost = (
             world.config.speech_energy_cost if choice.speech is not None else 0
@@ -647,6 +673,18 @@ def _charge_choice_costs(
     for survivor in survivors:
         if survivor.energy <= 0:
             _die(world, cycle, slot, survivor, "choice_energy_depleted")
+
+
+def _resolve_wait(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    active: Sequence[Survivor],
+    parsed: Mapping[str, ParsedSurvivalChoice],
+) -> None:
+    for survivor in active:
+        if parsed[survivor.name].action.kind == "wait":
+            _emit(world, cycle, slot, "wait_completed", survivor.name)
 
 
 def _resolve_forage(
@@ -736,6 +774,19 @@ def _resolve_gifts(
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
+    if world.interaction_protocol == SLOTS_V1:
+        _resolve_gifts_slots_v1(world, cycle, slot, active, parsed)
+        return
+    _resolve_gifts_global_beats_v2(world, cycle, slot, active, parsed)
+
+
+def _resolve_gifts_slots_v1(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    active: Sequence[Survivor],
+    parsed: Mapping[str, ParsedSurvivalChoice],
+) -> None:
     givers = [
         survivor
         for survivor in active
@@ -764,6 +815,64 @@ def _resolve_gifts(
                 f"not enough {resource} to give",
             )
             continue
+        setattr(survivor, resource, int(getattr(survivor, resource)) - amount)
+        setattr(target, resource, int(getattr(target, resource)) + amount)
+        _emit(
+            world,
+            cycle,
+            slot,
+            "resource_given",
+            survivor.name,
+            target=target.name,
+            resource=resource,
+            amount=amount,
+        )
+
+
+def _resolve_gifts_global_beats_v2(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    active: Sequence[Survivor],
+    parsed: Mapping[str, ParsedSurvivalChoice],
+) -> None:
+    givers = [
+        survivor
+        for survivor in active
+        if parsed[survivor.name].action.kind in {"give_food", "give_wood"}
+    ]
+    phase_start_holdings = {
+        (survivor.name, resource): int(getattr(survivor, resource))
+        for survivor in givers
+        for resource in ("food", "wood")
+    }
+    transfers: list[tuple[Survivor, Survivor, str, int]] = []
+    for survivor in _resolution_order(world, cycle, slot, givers, "give"):
+        action = parsed[survivor.name].action
+        resource = "food" if action.kind == "give_food" else "wood"
+        target = world.survivors[str(action.payload["target"])]
+        amount = int(action.payload["amount"])
+        if not target.alive:
+            _reject_resolution(
+                world,
+                cycle,
+                slot,
+                survivor,
+                "gift target died before resolution",
+            )
+            continue
+        if phase_start_holdings[(survivor.name, resource)] < amount:
+            _reject_resolution(
+                world,
+                cycle,
+                slot,
+                survivor,
+                f"not enough {resource} to give at transfer-phase start",
+            )
+            continue
+        transfers.append((survivor, target, resource, amount))
+
+    for survivor, target, resource, amount in transfers:
         setattr(survivor, resource, int(getattr(survivor, resource)) - amount)
         setattr(target, resource, int(getattr(target, resource)) + amount)
         _emit(
@@ -1267,6 +1376,9 @@ def _world_from_snapshot(
     event_sequence_offset: int,
 ) -> SurvivalWorld:
     config = SurvivalConfig(**dict(snapshot["config"]))
+    interaction_protocol = validate_interaction_protocol(
+        snapshot.get("interaction_protocol", SLOTS_V1)
+    )
     survivors = {
         str(item["name"]): Survivor(
             seat_id=str(item["seat_id"]),
@@ -1349,6 +1461,7 @@ def _world_from_snapshot(
             else None
         ),
         prior_public_record=prior_public_record,
+        interaction_protocol=interaction_protocol,
     )
 
 
@@ -1431,6 +1544,7 @@ def _event_for_view(
         "food_foraged",
         "wood_gathered",
         "food_eaten",
+        "wait_completed",
         "resource_given",
         "cycle_energy_paid",
         "deadline_choice_cancelled",

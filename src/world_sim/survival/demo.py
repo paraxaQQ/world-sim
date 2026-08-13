@@ -61,6 +61,7 @@ def survival_metrics(result: SurvivalResult) -> dict[str, int]:
         "messages_sent": event_counts.get("speech_sent", 0),
         "messages_rejected": event_counts.get("speech_rejected", 0)
         + event_counts.get("speech_resolution_rejected", 0),
+        "waits_completed": event_counts.get("wait_completed", 0),
         "voluntary_rests": event_counts.get("rest_started", 0),
         "forced_collapses": event_counts.get("forced_collapse", 0),
         "deadline_choices_cancelled": event_counts.get(

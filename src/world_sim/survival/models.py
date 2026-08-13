@@ -13,6 +13,19 @@ DEFAULT_SURVIVOR_NAMES: tuple[str, ...] = (
     "Sable",
     "Vale",
 )
+SLOTS_V1 = "slots-v1"
+GLOBAL_BEATS_V2 = "global-beats-v2"
+INTERACTION_PROTOCOLS: tuple[str, ...] = (SLOTS_V1, GLOBAL_BEATS_V2)
+
+
+def validate_interaction_protocol(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("interaction_protocol must be a string")
+    if value not in INTERACTION_PROTOCOLS:
+        raise ValueError(
+            "interaction_protocol must be one of " + ", ".join(INTERACTION_PROTOCOLS)
+        )
+    return value
 
 
 @dataclass(frozen=True)
@@ -328,6 +341,7 @@ class SurvivorView:
     rules: dict[str, Any]
     allowed_actions: tuple[dict[str, Any], ...]
     prior_public_record: PriorPublicRecord | None = None
+    interaction_protocol: str = SLOTS_V1
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -346,6 +360,8 @@ class SurvivorView:
         }
         if self.prior_public_record is not None:
             payload["prior_public_record"] = self.prior_public_record.to_dict()
+        if self.interaction_protocol != SLOTS_V1:
+            payload["interaction_protocol"] = self.interaction_protocol
         return payload
 
 
@@ -362,6 +378,7 @@ class SurvivalWorld:
     event_sequence_offset: int = 0
     finished_reason: str | None = None
     prior_public_record: PriorPublicRecord | None = None
+    interaction_protocol: str = SLOTS_V1
 
     @property
     def finished(self) -> bool:
@@ -397,6 +414,8 @@ class SurvivalWorld:
             payload["events"] = [event.to_dict() for event in self.events]
         if self.prior_public_record is not None:
             payload["prior_public_record"] = self.prior_public_record.to_dict()
+        if self.interaction_protocol != SLOTS_V1:
+            payload["interaction_protocol"] = self.interaction_protocol
         return payload
 
 

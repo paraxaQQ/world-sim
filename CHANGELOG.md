@@ -1,5 +1,14 @@
 # changelog
 
+## 0.10.0 - 2026-08-13
+
+- expose the existing simultaneous within-day scheduler as shared decision beats while keeping action and speech in one model response
+- add a zero-cost `wait` action that consumes one beat without ending the survivor's day
+- make global-beat transfers atomic against phase-start holdings, then resolve dependent eating and shelter construction
+- preserve exact replay of retained legacy runs through an explicit interaction-protocol boundary
+- report completed waits and retain a 5,120-run `global-beats-v2` confirmation with all 21 ecology gates passing
+- correct the session-2 interpretation: fixed seat order did not resolve actions early; the missing `wait` action made continued negotiation unnecessarily costly
+
 ## 0.9.0 - 2026-08-13
 
 - add verified live continuation from an exact completed parent artifact instead of recreating prior cycles

@@ -79,7 +79,7 @@ The host verified and resumed the exact session-1 artifact. Every survivor recei
 
 The episode completed nine valid calls and nine broadcasts. Birch stated the valid solution on chance 1: Cinder or Lumen could transfer two wood to the other, enabling one shelter. Aster repeated the solution on chance 2.
 
-No survivor selected a transfer. Cinder rested on chance 1, before it could hear any current-cycle broadcast. Lumen heard Birch's proposal on chance 2, after Cinder's rest had already closed the same-cycle shelter path. The engine recorded zero attempted transfers, zero completed transfers, and zero shelters.
+No survivor selected a transfer. All chance-1 choices came from frozen simultaneous views. Cinder rested before it could hear any current-cycle broadcast. Lumen heard Birch's proposal on chance 2, after Cinder had ended its participation for the cycle. The engine recorded zero attempted transfers, zero completed transfers, and zero shelters.
 
 | survivor | final energy | food | wood | shelter |
 | --- | ---: | ---: | ---: | --- |
@@ -92,7 +92,9 @@ No survivor selected a transfer. Cinder rested on chance 1, before it could hear
 
 - The group produced the correct verbal plan without executing it.
 - The people who verbalized the plan did not control the required resource.
-- Turn order and permanent rest made the opportunity fragile. The trace does not show a resource holder rejecting a proposal while it was still actionable.
+- Fixed seat order did not resolve anyone's choice early. Every survivor acted from the same unresolved chance-1 moment.
+- The old action set had no `wait`. Remaining available for another message required a physical action, a transfer, or rest.
+- A same-chance shelter required one wood-holder to give while the other independently chose to build from the unverified prior record. Birch's clearer current-cycle proposal arrived only after Cinder rested.
 - Cinder and Lumen retained their two wood each. Shared land regrew to two wood for the next cycle.
 
 ### evidence
@@ -106,4 +108,4 @@ No survivor selected a transfer. Cinder rested on chance 1, before it could hear
 
 ### claim boundary
 
-Session 2 is one exploratory continuation chosen after session 1. It has no no-memory control, alternate order, or replicate seeds. It shows a spoken solution followed by no costly transfer under one fragile coordination window; it does not establish that memory caused the speech or behavior.
+Session 2 is one exploratory continuation chosen after session 1. It has no no-memory control or replicate seeds. It shows a spoken solution followed by no costly transfer under one fragile coordination window; it does not establish that memory caused the speech or behavior.

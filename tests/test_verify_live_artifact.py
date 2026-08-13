@@ -12,6 +12,26 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER_PATH = REPOSITORY_ROOT / "tools" / "verify_live_artifact.py"
+SESSION_1_ARTIFACT = (
+    REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
+)
+SESSION_1_ARTIFACT_SHA256 = (
+    "a98ec8216c08a172c4ed29fb1da65b63defd3b4a29f53e95fa26a1e187e38b90"
+)
+SESSION_1_CANONICAL_SHA256 = (
+    "490663b4a743f51c4b0f44ccc57ba91ee2a7b6d6adafbcda072373a7748a54e7"
+)
+SESSION_2_ARTIFACT = (
+    REPOSITORY_ROOT
+    / "outputs"
+    / "v0.9.0-session-002-shelter-dilemma-29993.json"
+)
+SESSION_2_ARTIFACT_SHA256 = (
+    "fc0b07dfc404a2f485f3b6a2c2f191fec5e495153d6147d428d6cb251cab27fe"
+)
+SESSION_2_CANONICAL_SHA256 = (
+    "ed1f299bbc698951e77256b46291ea4ee142469bc0a7cd0e7b6bf476820392ca"
+)
 SPEC = importlib.util.spec_from_file_location("verify_live_artifact", VERIFIER_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("cannot load live artifact verifier")
@@ -23,9 +43,15 @@ from world_sim.survival.engine import (
     adjust_shared_resource,
     continue_survival_world,
     make_survival_world,
+    replay_survival,
     run_survival,
 )
-from world_sim.survival.models import SurvivalConfig, SurvivorView
+from world_sim.survival.models import (
+    GLOBAL_BEATS_V2,
+    SLOTS_V1,
+    SurvivalConfig,
+    SurvivorView,
+)
 
 
 class _RestSpeaker:
@@ -51,6 +77,7 @@ def _parent_artifact(*, seed: int = 29_993) -> dict[str, object]:
         ("Aster", "Birch"),
         seed=seed,
         config=SurvivalConfig(max_days=1),
+        interaction_protocol=SLOTS_V1,
     )
     result = run_survival(
         world,
@@ -80,12 +107,17 @@ def _write_artifact(path: Path, artifact: Mapping[str, object]) -> str:
 
 def _continuation_artifacts(
     directory: Path,
+    *,
+    interaction_protocol: str | None = None,
 ) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
     parent = _parent_artifact()
     parent_path = directory / "renamed-parent.data"
     parent_sha256 = _write_artifact(parent_path, parent)
     parent_result = VERIFIER._survival_result(parent["result"])
-    world = continue_survival_world(parent_result)
+    world = continue_survival_world(
+        parent_result,
+        interaction_protocol=interaction_protocol,
+    )
     transition = adjust_shared_resource(
         world,
         resource="wood",
@@ -101,6 +133,15 @@ def _continuation_artifacts(
         {"Aster": _RestSpeaker(), "Birch": _RestSpeaker()},
         days=1,
     )
+    child_config: dict[str, object] = {
+        "seed": world.seed,
+        "cycles_requested": 1,
+        "starting_cycle": 2,
+        "ending_cycle": 2,
+        "world_config": world.config.to_dict(),
+    }
+    if interaction_protocol is not None:
+        child_config["interaction_protocol"] = interaction_protocol
     child: dict[str, object] = {
         "format_version": 4,
         "mode": "live_named_survival_continuation",
@@ -124,13 +165,7 @@ def _continuation_artifacts(
             "objective_totals_source": "verified_parent_engine_events",
             "record": public_record.to_dict(),
         },
-        "config": {
-            "seed": world.seed,
-            "cycles_requested": 1,
-            "starting_cycle": 2,
-            "ending_cycle": 2,
-            "world_config": world.config.to_dict(),
-        },
+        "config": child_config,
         "seat_assignments": [
             {
                 "seat_id": "seat-001",
@@ -154,6 +189,48 @@ def _continuation_artifacts(
 
 
 class LiveArtifactVerifierTests(unittest.TestCase):
+    def test_retained_session_one_and_two_chain_remain_exact(self) -> None:
+        session_one = json.loads(SESSION_1_ARTIFACT.read_text(encoding="utf-8"))
+        session_two = json.loads(SESSION_2_ARTIFACT.read_text(encoding="utf-8"))
+        parent_receipt = VERIFIER.verify_live_artifact(
+            SESSION_1_ARTIFACT,
+            expected_artifact_sha256=SESSION_1_ARTIFACT_SHA256,
+        )
+        child_receipt = VERIFIER.verify_live_artifact(
+            SESSION_2_ARTIFACT,
+            expected_artifact_sha256=SESSION_2_ARTIFACT_SHA256,
+            parent_path=SESSION_1_ARTIFACT,
+        )
+
+        self.assertTrue(parent_receipt["exact_replay"])
+        self.assertNotIn(
+            "interaction_protocol",
+            session_one["result"]["initial_state"],
+        )
+        self.assertNotIn("interaction_protocol", session_two["config"])
+        self.assertNotIn(
+            "interaction_protocol",
+            session_two["result"]["initial_state"],
+        )
+        self.assertEqual(
+            parent_receipt["canonical_result_sha256"],
+            SESSION_1_CANONICAL_SHA256,
+        )
+        self.assertTrue(child_receipt["exact_replay"])
+        self.assertTrue(child_receipt["continuation_chain_verified"])
+        self.assertEqual(
+            child_receipt["canonical_result_sha256"],
+            SESSION_2_CANONICAL_SHA256,
+        )
+        self.assertEqual(
+            child_receipt["parent_artifact_sha256"],
+            SESSION_1_ARTIFACT_SHA256,
+        )
+        self.assertEqual(
+            child_receipt["parent_canonical_result_sha256"],
+            SESSION_1_CANONICAL_SHA256,
+        )
+
     def test_completed_continuation_verifies_actual_parent_chain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent, child, child_payload, _ = _continuation_artifacts(
@@ -172,6 +249,42 @@ class LiveArtifactVerifierTests(unittest.TestCase):
             receipt["parent_artifact_sha256"],
             child_payload["continuation_link"]["parent_artifact_sha256"],
         )
+
+    def test_recorded_global_beats_v2_upgrade_is_replay_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent, child_path, child, _ = _continuation_artifacts(
+                root,
+                interaction_protocol=GLOBAL_BEATS_V2,
+            )
+
+            receipt = VERIFIER.verify_live_artifact(
+                child_path,
+                parent_path=parent,
+            )
+            result = VERIFIER._survival_result(child["result"])
+            self.assertEqual(
+                child["config"]["interaction_protocol"],
+                GLOBAL_BEATS_V2,
+            )
+            self.assertEqual(
+                result.initial_state["interaction_protocol"],
+                GLOBAL_BEATS_V2,
+            )
+            self.assertEqual(replay_survival(result).to_dict(), result.to_dict())
+            self.assertTrue(receipt["continuation_chain_verified"])
+
+            child["config"]["interaction_protocol"] = SLOTS_V1
+            child["result"]["initial_state"].pop("interaction_protocol")
+            tampered_result = VERIFIER._survival_result(child["result"])
+            child["canonical_result_sha256"] = result_sha256(tampered_result)
+            _write_artifact(child_path, child)
+
+            with self.assertRaisesRegex(ValueError, "view hash mismatch"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent,
+                )
 
     def test_continuation_requires_an_actual_parent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -18,14 +18,20 @@ from .model_host import (
     DEFAULT_LIVE_TEMPERATURE,
     DEFAULT_LIVE_TIMEOUT_SECONDS,
     LIVE_REASONING_EFFORTS,
-    run_paid_adapter_qualification,
     run_live_survival,
     run_live_survival_continuation,
+    run_paid_adapter_qualification,
 )
 from .models import SelectionMode, VerificationMode, WorldConfig
-from .selection import LineageConfig, LineageExperiment, run_lineage_experiment, run_selection_matrix
+from .selection import (
+    LineageConfig,
+    LineageExperiment,
+    run_lineage_experiment,
+    run_selection_matrix,
+)
 from .survival.calibration import CALIBRATION_NAMES, LEAN_CAMP_V1
 from .survival.demo import result_sha256, run_survival_demo, survival_metrics
+from .survival.models import GLOBAL_BEATS_V2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -440,7 +446,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary["output"] = str(args.output)
     if args.command in {"survive-live", "continue-live"} and args.show_transcript:
         for call in payload["calls"]:
-            _print_live_call(call)
+            _print_live_call(
+                call,
+                interaction_protocol=payload["config"]["interaction_protocol"],
+            )
     print(json.dumps(summary, sort_keys=True))
     return exit_code
 
@@ -583,18 +592,25 @@ def _lineage_summary(experiment: LineageExperiment) -> dict[str, Any]:
     }
 
 
-def _print_live_call(record: Mapping[str, Any]) -> None:
+def _print_live_call(
+    record: Mapping[str, Any],
+    *,
+    interaction_protocol: str,
+) -> None:
+    unit = "day" if interaction_protocol == GLOBAL_BEATS_V2 else "cycle"
+    step = "beat" if interaction_protocol == GLOBAL_BEATS_V2 else "slot"
     if record["status"] == "failed":
         error = record["error"]
         print(
-            f"cycle {record['cycle']} slot {record['slot']} | {record['public_name']} | "
+            f"{unit} {record['cycle']} {step} {record['slot']} | "
+            f"{record['public_name']} | "
             f"provider failure: {error['kind']}"
         )
         return
     parsed = record["parsed_choice"]
     action = parsed["action"]
     line = (
-        f"cycle {record['cycle']} slot {record['slot']} | "
+        f"{unit} {record['cycle']} {step} {record['slot']} | "
         f"{record['public_name']} | {action['kind']}"
     )
     speech = parsed["say"]

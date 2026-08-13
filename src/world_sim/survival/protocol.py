@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, NoReturn, Sequence
 
+from .models import GLOBAL_BEATS_V2, SLOTS_V1, validate_interaction_protocol
 
 MODEL_MAX_COMPLETION_TOKENS = 10_000
 MODEL_MAX_RESPONSE_BYTES = 8_192
@@ -60,10 +61,13 @@ def allowed_survival_actions(
     *,
     living_peers: Sequence[str],
     max_food_eaten: int,
+    interaction_protocol: str = SLOTS_V1,
 ) -> tuple[dict[str, Any], ...]:
+    active_protocol = validate_interaction_protocol(interaction_protocol)
     peers = list(living_peers)
     actions: tuple[dict[str, Any], ...] = (
         {"kind": "rest"},
+        *(({"kind": "wait"},) if active_protocol == GLOBAL_BEATS_V2 else ()),
         {"kind": "forage"},
         {"kind": "gather_wood"},
         {"kind": "eat", "amount": f"integer 1..{max_food_eaten}"},
@@ -84,7 +88,9 @@ def parse_survival_choice(
     living_peers: Sequence[str],
     max_food_eaten: int,
     max_speech_chars: int,
+    interaction_protocol: str = SLOTS_V1,
 ) -> ParsedSurvivalChoice:
+    active_protocol = validate_interaction_protocol(interaction_protocol)
     if not isinstance(raw_choice, Mapping):
         return _invalid_choice("choice must be an object")
     if set(raw_choice) != {"action", "say"}:
@@ -94,6 +100,7 @@ def parse_survival_choice(
         raw_choice["action"],
         living_peers=living_peers,
         max_food_eaten=max_food_eaten,
+        interaction_protocol=active_protocol,
     )
     speech, speech_error = _parse_speech(
         raw_choice["say"],
@@ -116,6 +123,7 @@ def parse_model_response(
     living_peers: Sequence[str],
     max_food_eaten: int,
     max_speech_chars: int,
+    interaction_protocol: str = SLOTS_V1,
 ) -> ParsedSurvivalChoice:
     raw_choice, error = parse_strict_model_json(raw_response)
     if error is not None:
@@ -126,6 +134,7 @@ def parse_model_response(
         living_peers=living_peers,
         max_food_eaten=max_food_eaten,
         max_speech_chars=max_speech_chars,
+        interaction_protocol=interaction_protocol,
     )
 
 
@@ -153,6 +162,7 @@ def _parse_action(
     *,
     living_peers: Sequence[str],
     max_food_eaten: int,
+    interaction_protocol: str,
 ) -> tuple[SurvivalAction | None, str | None]:
     if not isinstance(raw_action, Mapping):
         return None, "action must be an object"
@@ -168,6 +178,8 @@ def _parse_action(
         "give_food": {"kind", "target", "amount"},
         "give_wood": {"kind", "target", "amount"},
     }
+    if interaction_protocol == GLOBAL_BEATS_V2:
+        expected_keys["wait"] = {"kind"}
     if kind not in expected_keys:
         return None, f"unknown action kind {kind!r}"
     if set(raw_action) != expected_keys[kind]:

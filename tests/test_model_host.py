@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -8,11 +9,16 @@ import sys
 import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
+from contextlib import redirect_stdout
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 
-from world_sim.cli import _reserve_live_output, _write_reserved_live_output
+from world_sim.cli import (
+    _print_live_call,
+    _reserve_live_output,
+    _write_reserved_live_output,
+)
 from world_sim.model_host import (
     ChatTransport,
     EndpointSpec,
@@ -27,7 +33,11 @@ from world_sim.survival.engine import (
     replay_survival,
     survival_view_for,
 )
-from world_sim.survival.models import SurvivalResult
+from world_sim.survival.models import (
+    GLOBAL_BEATS_V2,
+    SLOTS_V1,
+    SurvivalResult,
+)
 from world_sim.survival.prompt import response_schema
 
 TEST_MODEL_NAMES = ("alpha", "beta", "gamma", "delta")
@@ -39,6 +49,7 @@ PAID_MODELS = tuple(
 )
 GROK_MODELS = ("opencode-paid/grok-4.6",) * 4
 REST_REPLY = '{"action":{"kind":"rest"},"say":null}'
+WAIT_REPLY = '{"action":{"kind":"wait"},"say":null}'
 
 
 def response(
@@ -244,6 +255,148 @@ class ModelHostTests(unittest.TestCase):
         path.write_bytes(raw)
         return path, hashlib.sha256(raw).hexdigest()
 
+    def test_live_first_beat_uses_frozen_views_and_next_beat_hears_speech(
+        self,
+    ) -> None:
+        broadcasts = {
+            "Aster": "aster beat-one broadcast",
+            "Birch": "birch beat-one broadcast",
+            "Cinder": "cinder beat-one broadcast",
+            "Lumen": "lumen beat-one broadcast",
+        }
+        first_beat = (
+            '{"action":{"kind":"gather_wood"},"say":{"to":"everyone","text":"aster beat-one broadcast"}}',
+            '{"action":{"kind":"forage"},"say":{"to":"everyone","text":"birch beat-one broadcast"}}',
+            '{"action":{"kind":"wait"},"say":{"to":"everyone","text":"cinder beat-one broadcast"}}',
+            '{"action":{"kind":"wait"},"say":{"to":"everyone","text":"lumen beat-one broadcast"}}',
+        )
+        transport = FakeTransport(
+            [response(reply) for reply in (*first_beat, *(REST_REPLY,) * 4)]
+        )
+
+        artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            days=1,
+            max_calls=8,
+            transport=transport,
+            environ={},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(
+            artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
+        )
+        self.assertEqual(
+            [call["slot"] for call in artifact["calls"]],
+            [1] * 4 + [2] * 4,
+        )
+        first_prompts = [
+            request["body"]["messages"][1]["content"]
+            for request in transport.requests[:4]
+        ]
+        for request, prompt in zip(
+            transport.requests[:4], first_prompts, strict=True
+        ):
+            system_prompt = request["body"]["messages"][0]["content"]
+            self.assertIn("Each day unfolds in global beats", system_prompt)
+            self.assertIn("day 1, beat 1 of 4", prompt)
+            self.assertIn("wood available: 4 of 12", prompt)
+            self.assertTrue(
+                all(text not in prompt for text in broadcasts.values())
+            )
+
+        second_prompts = [
+            request["body"]["messages"][1]["content"]
+            for request in transport.requests[4:]
+        ]
+        for public_name, prompt in zip(
+            broadcasts, second_prompts, strict=True
+        ):
+            self.assertIn("day 1, beat 2 of 4", prompt)
+            self.assertIn("wood available: 2 of 12", prompt)
+            inbox = prompt.split(
+                "messages heard since your last active beat:\n", 1
+            )[1].split("\n\nobjective outcomes", 1)[0]
+            for speaker, text in broadcasts.items():
+                if speaker == public_name:
+                    self.assertNotIn(text, inbox)
+                else:
+                    self.assertIn(text, inbox)
+        for call in artifact["calls"][2:4]:
+            self.assertEqual(call["parsed_choice"]["action"], {"kind": "wait"})
+            self.assertIsNone(call["validation"]["action_error"])
+        self.assertEqual(
+            replay_survival(result_from(artifact)).to_dict(), artifact["result"]
+        )
+
+    def test_paid_provider_failure_mid_beat_never_resolves_or_retries(self) -> None:
+        exhausted_payload = json.loads(
+            paid_panel_response(2, WAIT_REPLY, cost="0.001").body
+        )
+        exhausted_payload["choices"][0]["finish_reason"] = "length"
+        transport = FakeTransport(
+            [
+                paid_panel_response(0, WAIT_REPLY, cost="0.001"),
+                paid_panel_response(1, WAIT_REPLY, cost="0.001"),
+                TransportResponse(200, {}, json.dumps(exhausted_payload)),
+            ]
+        )
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.11",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "completion_budget_exhausted")
+        self.assertEqual(len(transport.requests), 3)
+        self.assertEqual(
+            [call["status"] for call in artifact["calls"]],
+            ["succeeded", "succeeded", "failed"],
+        )
+        self.assertTrue(
+            all(call["slot"] == 1 for call in artifact["calls"])
+        )
+        event_kinds = [
+            event["kind"] for event in artifact["partial_state"]["events"]
+        ]
+        self.assertEqual(event_kinds, ["cycle_started", "slot_started"])
+        self.assertEqual(
+            artifact["partial_state"]["resources"],
+            {"food": 6, "food_capacity": 12, "wood": 4, "wood_capacity": 12},
+        )
+        self.assertTrue(
+            all(
+                survivor["energy"] == 16
+                for survivor in artifact["partial_state"]["survivors"]
+            )
+        )
+
+    def test_live_transcript_uses_protocol_specific_labels(self) -> None:
+        record = {
+            "status": "succeeded",
+            "cycle": 2,
+            "slot": 3,
+            "public_name": "Aster",
+            "parsed_choice": {"action": {"kind": "wait"}, "say": None},
+        }
+        output = io.StringIO()
+        with redirect_stdout(output):
+            _print_live_call(record, interaction_protocol=GLOBAL_BEATS_V2)
+            _print_live_call(record, interaction_protocol=SLOTS_V1)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "day 2 beat 3 | Aster | wait",
+                "cycle 2 slot 3 | Aster | wait",
+            ],
+        )
+
     def test_live_continuation_verifies_parent_and_records_objective_chain(self) -> None:
         parent = self._continuation_parent()
         child_replies = (
@@ -276,6 +429,9 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["status"], "completed")
         self.assertEqual(artifact["format_version"], 4)
         self.assertEqual(artifact["mode"], "live_named_survival_continuation")
+        self.assertEqual(
+            artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
+        )
         self.assertEqual(
             artifact["continuation_link"]["parent_artifact_sha256"],
             parent_sha256,
@@ -334,7 +490,7 @@ class ModelHostTests(unittest.TestCase):
 
         first_request = child_transport.requests[0]["body"]
         prompt = first_request["messages"][1]["content"]
-        self.assertIn("cycle 2, chance 1", prompt)
+        self.assertIn("day 2, beat 1", prompt)
         self.assertIn("Aster final public note", prompt)
         self.assertIn("Lumen final public note", prompt)
         self.assertIn("wood available: 0 of 12", prompt)
@@ -791,7 +947,10 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.9.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.10.0")
+        self.assertEqual(
+            artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
+        )
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -1052,7 +1211,7 @@ class ModelHostTests(unittest.TestCase):
             days=1,
             max_calls=4,
             max_completion_tokens=1_024,
-            max_paid_usd="0.10",
+            max_paid_usd="0.11",
             transport=FakeTransport(
                 [TransportResponse(200, {}, json.dumps(exhausted))]
             ),
@@ -1080,7 +1239,7 @@ class ModelHostTests(unittest.TestCase):
             days=1,
             max_calls=4,
             max_completion_tokens=1_024,
-            max_paid_usd="0.10",
+            max_paid_usd="0.11",
             transport=FakeTransport(
                 [TransportResponse(200, {}, json.dumps(malformed))]
             ),
@@ -1106,7 +1265,7 @@ class ModelHostTests(unittest.TestCase):
                     days=1,
                     max_calls=4,
                     max_completion_tokens=1_024,
-                    max_paid_usd="0.10",
+                    max_paid_usd="0.11",
                     transport=FakeTransport(
                         [TransportResponse(200, {}, json.dumps(conflicting))]
                     ),
@@ -1143,7 +1302,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.9.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.10.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -1442,15 +1601,13 @@ class ModelHostTests(unittest.TestCase):
                 survival_view_for(world, public_name)
             )
             self.assertEqual(rendered_schema, expected_schema)
-            self.assertEqual(
-                rendered_schema["properties"]["action"]["oneOf"][2],
-                {
-                    "type": "object",
-                    "properties": {"kind": {"const": "gather_wood"}},
-                    "required": ["kind"],
-                    "additionalProperties": False,
-                },
-            )
+            fixed_action_kinds = {
+                variant["properties"]["kind"]["const"]
+                for variant in rendered_schema["properties"]["action"]["oneOf"]
+                if set(variant.get("properties", {})) == {"kind"}
+            }
+            self.assertIn("wait", fixed_action_kinds)
+            self.assertIn("gather_wood", fixed_action_kinds)
             self.assertNotIn(model, json.dumps(messages))
 
     def test_paid_compatibility_profile_rejects_grok_before_transport(self) -> None:

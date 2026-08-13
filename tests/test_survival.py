@@ -5,8 +5,13 @@ import unittest
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
-from world_sim.survival.demo import canonical_result_json, run_survival_demo
+from world_sim.survival.demo import (
+    canonical_result_json,
+    run_survival_demo,
+    survival_metrics,
+)
 from world_sim.survival.engine import (
+    continue_survival_world,
     make_survival_world,
     replay_survival,
     run_survival,
@@ -14,10 +19,12 @@ from world_sim.survival.engine import (
     survival_view_for,
 )
 from world_sim.survival.models import (
+    GLOBAL_BEATS_V2,
+    SLOTS_V1,
     SurvivalConfig,
     SurvivalEvent,
-    SurvivorView,
     SurvivalWorld,
+    SurvivorView,
 )
 from world_sim.survival.prompt import (
     render_system_prompt,
@@ -38,6 +45,10 @@ def choice(action: Mapping[str, object], say: object = None) -> dict[str, object
 
 def rest(say: object = None) -> dict[str, object]:
     return choice({"kind": "rest"}, say)
+
+
+def wait(say: object = None) -> dict[str, object]:
+    return choice({"kind": "wait"}, say)
 
 
 class ScriptedPolicy:
@@ -163,6 +174,84 @@ class SurvivalEngineTests(unittest.TestCase):
         self.assertTrue(all(event["cycle"] == 2 for event in continued.events))
         self.assertEqual(continued.to_dict(), replay_survival(continued).to_dict())
 
+    def test_legacy_snapshot_omits_protocol_and_retains_legacy_actions(self) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SLOTS_V1,
+        )
+        view = survival_view_for(world, "Aster")
+
+        self.assertEqual(view.interaction_protocol, SLOTS_V1)
+        self.assertNotIn("interaction_protocol", world.to_dict())
+        self.assertNotIn("interaction_protocol", view.to_dict())
+        self.assertNotIn("wait", view.rules["action_energy_costs"])
+        self.assertFalse(
+            any(action["kind"] == "wait" for action in view.allowed_actions)
+        )
+        parsed = parse_survival_choice(
+            wait(),
+            actor="Aster",
+            living_peers=("Birch",),
+            max_food_eaten=2,
+            max_speech_chars=500,
+            interaction_protocol=SLOTS_V1,
+        )
+        self.assertEqual(parsed.action.kind, "invalid")
+
+        result = run_survival(
+            world,
+            {
+                "Aster": ScriptedPolicy((rest(),)),
+                "Birch": ScriptedPolicy((rest(),)),
+            },
+            days=1,
+        )
+        self.assertNotIn("interaction_protocol", result.initial_state)
+        self.assertNotIn("interaction_protocol", result.final_state)
+        self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+
+    def test_continuation_preserves_or_explicitly_upgrades_protocol(self) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SLOTS_V1,
+        )
+        parent = run_survival(
+            world,
+            {
+                "Aster": ScriptedPolicy(
+                    (rest({"to": "everyone", "text": "Aster final"}),)
+                ),
+                "Birch": ScriptedPolicy(
+                    (rest({"to": "everyone", "text": "Birch final"}),)
+                ),
+            },
+            days=1,
+        )
+
+        preserved = continue_survival_world(parent)
+        upgraded = continue_survival_world(
+            parent,
+            interaction_protocol=GLOBAL_BEATS_V2,
+        )
+
+        self.assertEqual(preserved.interaction_protocol, SLOTS_V1)
+        self.assertNotIn("interaction_protocol", preserved.to_dict())
+        self.assertEqual(upgraded.interaction_protocol, GLOBAL_BEATS_V2)
+        self.assertEqual(
+            upgraded.to_dict()["interaction_protocol"],
+            GLOBAL_BEATS_V2,
+        )
+        self.assertTrue(
+            any(
+                action["kind"] == "wait"
+                for action in survival_view_for(upgraded, "Aster").allowed_actions
+            )
+        )
+
     def test_same_slot_views_are_simultaneous_and_mapping_order_is_invariant(self) -> None:
         world = make_survival_world(("Aster", "Birch"), seed=3)
         aster = ScriptedPolicy(
@@ -233,6 +322,80 @@ class SurvivalEngineTests(unittest.TestCase):
             [message["text"] for message in aster.views[1].inbox],
             ["pong"],
         )
+
+    def test_wait_stays_awake_and_speech_arrives_on_the_next_beat(self) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(
+                max_days=1,
+                food_starting_stock=16,
+                food_capacity=16,
+                wood_starting_stock=16,
+                wood_capacity=16,
+            ),
+        )
+        aster = ScriptedPolicy(
+            (
+                wait({"to": "Birch", "text": "ping next beat"}),
+                rest(),
+            )
+        )
+        birch = ScriptedPolicy((wait(), rest()))
+
+        result = run_survival(
+            world,
+            {"Aster": aster, "Birch": birch},
+            days=1,
+        )
+
+        self.assertEqual(aster.calls, 2)
+        self.assertEqual(birch.calls, 2)
+        self.assertEqual(birch.views[0].inbox, ())
+        self.assertEqual(
+            [message["text"] for message in birch.views[1].inbox],
+            ["ping next beat"],
+        )
+        self.assertEqual(len(events(world, "wait_completed")), 2)
+        wait_costs = [
+            event.detail["action_cost"]
+            for event in events(world, "choice_energy_paid")
+            if event.detail["action"] == "wait"
+        ]
+        self.assertEqual(wait_costs, [0, 0])
+        self.assertEqual(world.resources.food, 16)
+        self.assertEqual(world.resources.wood, 16)
+        self.assertEqual(survival_metrics(result)["waits_completed"], 2)
+        self.assertEqual(
+            result.initial_state["interaction_protocol"],
+            GLOBAL_BEATS_V2,
+        )
+        self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+
+    def test_final_beat_wait_and_speech_are_cancelled_then_exhausted(self) -> None:
+        world = make_survival_world(("Aster", "Birch"), seed=3)
+
+        run_survival_cycle(
+            world,
+            (
+                {"Aster": wait(), "Birch": rest()},
+                {"Aster": wait()},
+                {"Aster": wait()},
+                {
+                    "Aster": wait(
+                        {"to": "Birch", "text": "too late to send"}
+                    )
+                },
+            ),
+        )
+
+        self.assertEqual(len(events(world, "wait_completed", actor="Aster")), 3)
+        self.assertFalse(events(world, "speech_sent", actor="Aster"))
+        cancelled = events(world, "deadline_choice_cancelled", actor="Aster")
+        self.assertEqual(cancelled[0].detail["attempted_choice"], wait(
+            {"to": "Birch", "text": "too late to send"}
+        ))
+        self.assertEqual(len(events(world, "forced_collapse", actor="Aster")), 1)
 
     def test_early_rest_stops_future_provider_calls_in_that_cycle(self) -> None:
         world = make_survival_world(("Aster", "Birch"), seed=3)
@@ -529,6 +692,89 @@ class SurvivalEngineTests(unittest.TestCase):
         self.assertEqual(world.survivors["Birch"].food, 0)
         self.assertEqual(world.survivors["Birch"].energy, 18)
 
+    def test_gift_resolves_before_dependent_shelter_build_in_same_beat(
+        self,
+    ) -> None:
+        world = make_survival_world(("Aster", "Birch"), seed=3)
+        world.survivors["Aster"].wood = 2
+        world.survivors["Birch"].wood = 2
+
+        run_survival_cycle(
+            world,
+            (
+                {
+                    "Aster": choice(
+                        {"kind": "give_wood", "target": "Birch", "amount": 2}
+                    ),
+                    "Birch": choice({"kind": "build_shelter"}),
+                },
+                {"Aster": rest(), "Birch": rest()},
+            ),
+        )
+
+        self.assertEqual(world.survivors["Aster"].wood, 0)
+        self.assertEqual(world.survivors["Birch"].wood, 0)
+        self.assertTrue(world.survivors["Birch"].shelter)
+        self.assertEqual(len(events(world, "resource_given")), 1)
+        self.assertEqual(len(events(world, "shelter_built", actor="Birch")), 1)
+
+    def test_global_beat_gifts_cannot_relay_inbound_resources(self) -> None:
+        world = make_survival_world(("Aster", "Birch", "Cinder"), seed=3)
+        world.survivors["Aster"].wood = 2
+        world.survivors["Birch"].wood = 0
+        world.survivors["Cinder"].wood = 0
+
+        run_survival_cycle(
+            world,
+            (
+                {
+                    "Aster": choice(
+                        {"kind": "give_wood", "target": "Birch", "amount": 2}
+                    ),
+                    "Birch": choice(
+                        {"kind": "give_wood", "target": "Cinder", "amount": 1}
+                    ),
+                    "Cinder": rest(),
+                },
+                {"Aster": rest(), "Birch": rest()},
+            ),
+        )
+
+        self.assertEqual(world.survivors["Aster"].wood, 0)
+        self.assertEqual(world.survivors["Birch"].wood, 2)
+        self.assertEqual(world.survivors["Cinder"].wood, 0)
+        transfers = events(world, "resource_given")
+        self.assertEqual([(event.actor, event.detail["target"]) for event in transfers], [
+            ("Aster", "Birch")
+        ])
+        rejected = events(world, "action_resolution_rejected", actor="Birch")
+        self.assertIn("transfer-phase start", rejected[0].detail["reason"])
+
+    def test_global_beat_allows_reciprocal_funded_gifts(self) -> None:
+        world = make_survival_world(("Aster", "Birch"), seed=3)
+        world.survivors["Aster"].wood = 1
+        world.survivors["Birch"].wood = 1
+
+        run_survival_cycle(
+            world,
+            (
+                {
+                    "Aster": choice(
+                        {"kind": "give_wood", "target": "Birch", "amount": 1}
+                    ),
+                    "Birch": choice(
+                        {"kind": "give_wood", "target": "Aster", "amount": 1}
+                    ),
+                },
+                {"Aster": rest(), "Birch": rest()},
+            ),
+        )
+
+        self.assertEqual(world.survivors["Aster"].wood, 1)
+        self.assertEqual(world.survivors["Birch"].wood, 1)
+        self.assertEqual(len(events(world, "resource_given")), 2)
+        self.assertFalse(events(world, "action_resolution_rejected"))
+
     def test_impossible_action_still_pays_its_choice_cost(self) -> None:
         world = make_survival_world(("Aster", "Birch"), seed=3)
 
@@ -753,10 +999,15 @@ class SurvivalEngineTests(unittest.TestCase):
 
 
 class SurvivalPromptTests(unittest.TestCase):
-    def test_prompt_describes_slot_contract_without_provider_leaks(self) -> None:
+    def test_prompt_describes_global_beat_contract_without_provider_leaks(
+        self,
+    ) -> None:
         world = make_survival_world(("Aster", "Birch"), seed=3)
         view = survival_view_for(world, "Aster")
-        rendered = render_system_prompt("Aster") + render_turn_prompt(view)
+        rendered = render_system_prompt(
+            "Aster",
+            interaction_protocol=view.interaction_protocol,
+        ) + render_turn_prompt(view)
         lowered = rendered.lower()
 
         for forbidden in (
@@ -768,9 +1019,16 @@ class SurvivalPromptTests(unittest.TestCase):
             "civilization",
         ):
             self.assertNotIn(forbidden, lowered)
-        self.assertIn("cycle 1, chance 1 of 4", lowered)
-        self.assertIn("final chance", lowered)
-        self.assertIn("next active chance", lowered)
+        self.assertIn("day 1, beat 1 of 4", lowered)
+        self.assertIn("same frozen, unresolved moment", lowered)
+        self.assertIn("action and optional speech", lowered)
+        self.assertIn("wait does nothing and leaves you awake", lowered)
+        self.assertIn("rest ends your participation for the day", lowered)
+        self.assertIn("final beat", lowered)
+        self.assertIn("next active beat", lowered)
+        self.assertIn("transfers resolve before", lowered)
+        self.assertNotIn("cycle 1", lowered)
+        self.assertNotIn("chance 1", lowered)
         self.assertNotIn("seat-", rendered)
 
     def test_alias_rotation_does_not_reorder_peer_seats(self) -> None:
@@ -802,6 +1060,42 @@ class SurvivalPromptTests(unittest.TestCase):
         self.assertEqual(say_object["properties"]["text"]["maxLength"], 500)
         self.assertEqual(MODEL_MAX_COMPLETION_TOKENS, 10_000)
         self.assertEqual(MODEL_MAX_RESPONSE_BYTES, 8_192)
+        action_kinds = [
+            variant["properties"]["kind"]["const"]
+            for variant in schema["properties"]["action"]["oneOf"]
+        ]
+        self.assertIn("wait", action_kinds)
+        self.assertEqual(
+            survival_view_for(world, "Aster").rules["action_energy_costs"][
+                "wait"
+            ],
+            0,
+        )
+
+    def test_wait_protocol_accepts_exact_action_and_rejects_extra_fields(
+        self,
+    ) -> None:
+        accepted = parse_survival_choice(
+            wait(),
+            actor="Aster",
+            living_peers=("Birch",),
+            max_food_eaten=2,
+            max_speech_chars=500,
+            interaction_protocol=GLOBAL_BEATS_V2,
+        )
+        rejected = parse_survival_choice(
+            choice({"kind": "wait", "until": "later"}),
+            actor="Aster",
+            living_peers=("Birch",),
+            max_food_eaten=2,
+            max_speech_chars=500,
+            interaction_protocol=GLOBAL_BEATS_V2,
+        )
+
+        self.assertEqual(accepted.action.kind, "wait")
+        self.assertIsNone(accepted.action_error)
+        self.assertEqual(rejected.action.kind, "invalid")
+        self.assertIn("exactly", str(rejected.action_error))
 
     def test_speech_cap_is_enforced_by_the_strict_protocol(self) -> None:
         parsed = parse_survival_choice(

@@ -15,7 +15,7 @@ from .engine import (
     replay_survival,
     run_survival,
 )
-from .models import SurvivalConfig, SurvivalResult, SurvivorView
+from .models import GLOBAL_BEATS_V2, SurvivalConfig, SurvivalResult, SurvivorView
 
 
 LEAN_CAMP_V1 = "lean-camp-v1"
@@ -597,7 +597,13 @@ def run_calibration(
     if bootstrap_samples < 1:
         raise ValueError("bootstrap_samples must be positive")
     config = survival_preset(preset, cycles=cycles)
-    source_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    module_directory = Path(__file__).parent
+    source_sha256 = {
+        module_name: hashlib.sha256(
+            (module_directory / f"{module_name}.py").read_bytes()
+        ).hexdigest()
+        for module_name in ("calibration", "engine", "models", "protocol")
+    }
     rotations = seat_rotations()
     policy_runs: dict[str, list[_RunSummary]] = {
         policy_name: [] for policy_name in CALIBRATION_POLICIES
@@ -605,7 +611,12 @@ def run_calibration(
     for seed in seed_values:
         for rotation_index, names in enumerate(rotations):
             for policy_name in CALIBRATION_POLICIES:
-                world = make_survival_world(names, seed=seed, config=config)
+                world = make_survival_world(
+                    names,
+                    seed=seed,
+                    config=config,
+                    interaction_protocol=GLOBAL_BEATS_V2,
+                )
                 providers = {
                     name: scripted_policy(policy_name) for name in names
                 }
@@ -666,11 +677,15 @@ def run_calibration(
     return {
         "schema_version": 2,
         "source": {
-            "calibration_module_sha256": source_sha256,
+            **{
+                f"{module_name}_module_sha256": digest
+                for module_name, digest in source_sha256.items()
+            },
             "python": "3.11+",
         },
         "preset": {"name": preset, "config": config.to_dict()},
         "design": {
+            "interaction_protocol": GLOBAL_BEATS_V2,
             "cycles": cycles,
             "slots_per_cycle": config.slots_per_cycle,
             "population": len(CALIBRATION_NAMES),

@@ -25,6 +25,7 @@ from .survival.engine import (
 )
 from .survival.models import (
     DEFAULT_SURVIVOR_NAMES,
+    GLOBAL_BEATS_V2,
     SurvivalConfig,
     SurvivalResult,
     SurvivalWorld,
@@ -38,7 +39,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.9.0"
+WORLD_SIM_VERSION = "0.10.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -441,6 +442,7 @@ class _LiveProvider(SurvivalChoiceProvider):
             living_peers=tuple(str(peer["name"]) for peer in view.others),
             max_food_eaten=int(view.rules["max_food_eaten"]),
             max_speech_chars=int(view.rules["max_speech_chars"]),
+            interaction_protocol=view.interaction_protocol,
         )
         record = {
             **self._base_record(view, request, cost_authorization),
@@ -651,6 +653,7 @@ def run_live_survival(
         },
         "config": {
             "seed": seed,
+            "interaction_protocol": world.interaction_protocol,
             "days_requested": days,
             "cycles_requested": days,
             "slots_per_cycle": world_config.slots_per_cycle,
@@ -840,6 +843,7 @@ def run_live_survival_continuation(
     world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,
+        interaction_protocol=GLOBAL_BEATS_V2,
     )
     transition_event = adjust_shared_resource(
         world,
@@ -967,6 +971,7 @@ def run_live_survival_continuation(
         "public_record_receipt": public_record_receipt,
         "config": {
             "seed": world.seed,
+            "interaction_protocol": world.interaction_protocol,
             "days_requested": additional_cycles,
             "cycles_requested": additional_cycles,
             "starting_cycle": world.day + 1,
@@ -1651,7 +1656,13 @@ def _build_request(
     reasoning_effort: str | None,
 ) -> dict[str, object]:
     messages = [
-        {"role": "system", "content": render_system_prompt(view.name)},
+        {
+            "role": "system",
+            "content": render_system_prompt(
+                view.name,
+                interaction_protocol=view.interaction_protocol,
+            ),
+        },
         {"role": "user", "content": render_turn_prompt(view)},
     ]
     return _build_provider_request(

@@ -241,9 +241,15 @@ def _verify_continuation_artifact(
         or additional_cycles < 1
     ):
         raise ValueError("config cycles_requested must be a positive integer")
+    continuation_options: dict[str, Any] = {}
+    if "interaction_protocol" in config:
+        continuation_options["interaction_protocol"] = config[
+            "interaction_protocol"
+        ]
     expected_world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,
+        **continuation_options,
     )
 
     transition_receipt = _mapping(

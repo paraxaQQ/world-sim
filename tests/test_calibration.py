@@ -23,6 +23,7 @@ from world_sim.survival.calibration import (
     survival_preset,
 )
 from world_sim.survival.engine import make_survival_world, survival_view_for
+from world_sim.survival.models import GLOBAL_BEATS_V2
 
 
 class SurvivalCalibrationTests(unittest.TestCase):
@@ -147,11 +148,16 @@ class SurvivalCalibrationTests(unittest.TestCase):
             canonical_calibration_json(first), canonical_calibration_json(second)
         )
         self.assertEqual(first["design"]["run_count"], 20)
-        self.assertEqual(first["schema_version"], 2)
         self.assertEqual(
-            len(first["source"]["calibration_module_sha256"]),
-            64,
+            first["design"]["interaction_protocol"],
+            GLOBAL_BEATS_V2,
         )
+        self.assertEqual(first["schema_version"], 2)
+        for module_name in ("calibration", "engine", "models", "protocol"):
+            self.assertEqual(
+                len(first["source"][f"{module_name}_module_sha256"]),
+                64,
+            )
         self.assertEqual(len(first["per_seed_food_first_vs_mutual_aid"]), 1)
         self.assertEqual(first["design"]["seat_rotation_count"], 4)
         self.assertEqual(
