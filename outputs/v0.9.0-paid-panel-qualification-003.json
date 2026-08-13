@@ -1,0 +1,386 @@
+{
+  "authentication": {
+    "opencode-paid": "bearer"
+  },
+  "calls": [
+    {
+      "cost_authorization": {
+        "accounted_cost_usd": "0.00002898",
+        "accounting_basis": "provider_or_calculated_cost",
+        "cumulative_accounted_cost_usd": "0.00002898",
+        "cumulative_cost_bound_usd": "0.003736425",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "max_paid_usd": "0.3",
+        "prior_accounted_cost_usd": "0",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.003736425"
+      },
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode-paid/deepseek-v4-flash",
+      "request": {
+        "max_tokens": 10000,
+        "messages": [
+          {
+            "content": "You are performing an API compatibility check, not a game or decision task.\nReturn exactly one JSON object and nothing else. Do not explain your answer.",
+            "role": "system"
+          },
+          {
+            "content": "Return an object with exactly these keys and literal values:\n{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+            "role": "user"
+          }
+        ],
+        "model": "deepseek-v4-flash",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+        "provider_model": "deepseek-v4-flash",
+        "provider_reported_cost_usd": "0.00002898",
+        "request_id": "a2aa921f79c0eada-ORD",
+        "uncached_calculated_cost_usd": "0.00002898",
+        "usage": {
+          "completion_tokens": 63,
+          "prompt_tokens": 81,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "total_tokens": 144
+        }
+      },
+      "sequence": 1,
+      "status": "passed",
+      "transport_attempted": true,
+      "validation": {
+        "cost_within_bound": true,
+        "errors": [],
+        "exact_schema": true,
+        "model_identity": true,
+        "strict_json": true,
+        "terminal_completion": true
+      }
+    },
+    {
+      "cost_authorization": {
+        "accounted_cost_usd": "0.00107",
+        "accounting_basis": "provider_or_calculated_cost",
+        "cumulative_accounted_cost_usd": "0.00109898",
+        "cumulative_cost_bound_usd": "0.07840648",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "max_paid_usd": "0.3",
+        "prior_accounted_cost_usd": "0.00002898",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.0783775"
+      },
+      "endpoint": "https://opencode.ai/zen/v1/responses",
+      "model": "opencode-paid/grok-4.5",
+      "request": {
+        "input": [
+          {
+            "content": "You are performing an API compatibility check, not a game or decision task.\nReturn exactly one JSON object and nothing else. Do not explain your answer.",
+            "role": "system"
+          },
+          {
+            "content": "Return an object with exactly these keys and literal values:\n{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 10000,
+        "model": "grok-4.5",
+        "store": false,
+        "stream": false,
+        "temperature": 0.2,
+        "text": {
+          "format": {
+            "name": "adapter_qualification",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "ok": {
+                  "const": true
+                },
+                "protocol": {
+                  "const": "world-sim-adapter-v1"
+                }
+              },
+              "required": [
+                "protocol",
+                "ok"
+              ],
+              "type": "object"
+            },
+            "strict": true,
+            "type": "json_schema"
+          }
+        }
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"ok\":true,\"protocol\":\"world-sim-adapter-v1\"}",
+        "provider_model": "grok-4.5",
+        "provider_reported_cost_usd": "0.0006348",
+        "request_id": "a2aa922b4ddc1b3c-ORD",
+        "uncached_calculated_cost_usd": "0.00107",
+        "usage": {
+          "input_tokens": 343,
+          "input_tokens_details": {
+            "cached_tokens": 256
+          },
+          "output_tokens": 64,
+          "output_tokens_details": {
+            "reasoning_tokens": 47
+          },
+          "total_tokens": 407
+        }
+      },
+      "sequence": 2,
+      "status": "passed",
+      "transport_attempted": true,
+      "validation": {
+        "cost_within_bound": true,
+        "errors": [],
+        "exact_schema": true,
+        "model_identity": true,
+        "strict_json": true,
+        "terminal_completion": true
+      }
+    },
+    {
+      "cost_authorization": {
+        "accounted_cost_usd": "0.0009846",
+        "accounting_basis": "provider_or_calculated_cost",
+        "cumulative_accounted_cost_usd": "0.00208358",
+        "cumulative_cost_bound_usd": "0.0527032925",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "max_paid_usd": "0.3",
+        "prior_accounted_cost_usd": "0.00109898",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.0516043125"
+      },
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode-paid/kimi-k2.6",
+      "request": {
+        "max_completion_tokens": 10000,
+        "messages": [
+          {
+            "content": "You are performing an API compatibility check, not a game or decision task.\nReturn exactly one JSON object and nothing else. Do not explain your answer.",
+            "role": "system"
+          },
+          {
+            "content": "Return an object with exactly these keys and literal values:\n{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+            "role": "user"
+          }
+        ],
+        "model": "kimi-k2.6",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+        "provider_model": "kimi-k2.6",
+        "provider_reported_cost_usd": "0.00098065",
+        "request_id": "a2aa92b57bf7462e-ORD",
+        "uncached_calculated_cost_usd": "0.0009846",
+        "usage": {
+          "completion_tokens": 230,
+          "prompt_tokens": 68,
+          "prompt_tokens_details": {
+            "cached_tokens": 5
+          },
+          "total_tokens": 298
+        }
+      },
+      "sequence": 3,
+      "status": "passed",
+      "transport_attempted": true,
+      "validation": {
+        "cost_within_bound": true,
+        "errors": [],
+        "exact_schema": true,
+        "model_identity": true,
+        "strict_json": true,
+        "terminal_completion": true
+      }
+    },
+    {
+      "cost_authorization": {
+        "accounted_cost_usd": "0.0001714",
+        "accounting_basis": "provider_or_calculated_cost",
+        "cumulative_accounted_cost_usd": "0.00225498",
+        "cumulative_cost_bound_usd": "0.05944783",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "max_paid_usd": "0.3",
+        "prior_accounted_cost_usd": "0.00208358",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.05736425"
+      },
+      "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+      "model": "opencode-paid/glm-5.2",
+      "request": {
+        "max_tokens": 10000,
+        "messages": [
+          {
+            "content": "You are performing an API compatibility check, not a game or decision task.\nReturn exactly one JSON object and nothing else. Do not explain your answer.",
+            "role": "system"
+          },
+          {
+            "content": "Return an object with exactly these keys and literal values:\n{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+            "role": "user"
+          }
+        ],
+        "model": "glm-5.2",
+        "response_format": {
+          "type": "json_object"
+        },
+        "stream": false,
+        "temperature": 0.2
+      },
+      "response": {
+        "finish_reason": "stop",
+        "http_status": 200,
+        "model_reply": "{\"protocol\":\"world-sim-adapter-v1\",\"ok\":true}",
+        "provider_model": "glm-5.2",
+        "provider_reported_cost_usd": "0.0001714",
+        "request_id": "a2aa92c0996e7d78-ORD",
+        "uncached_calculated_cost_usd": "0.0001714",
+        "usage": {
+          "completion_tokens": 17,
+          "prompt_tokens": 69,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          },
+          "total_tokens": 86
+        }
+      },
+      "sequence": 4,
+      "status": "passed",
+      "transport_attempted": true,
+      "validation": {
+        "cost_within_bound": true,
+        "errors": [],
+        "exact_schema": true,
+        "model_identity": true,
+        "strict_json": true,
+        "terminal_completion": true
+      }
+    }
+  ],
+  "config": {
+    "attempts_per_model": 1,
+    "expected_response": {
+      "ok": true,
+      "protocol": "world-sim-adapter-v1"
+    },
+    "max_completion_tokens": 10000,
+    "max_paid_usd": "0.3",
+    "models": [
+      "opencode-paid/deepseek-v4-flash",
+      "opencode-paid/grok-4.5",
+      "opencode-paid/kimi-k2.6",
+      "opencode-paid/glm-5.2"
+    ],
+    "reasoning_effort": "provider-default",
+    "temperature": 0.2,
+    "timeout_seconds": 300.0
+  },
+  "format_version": 1,
+  "mode": "paid_adapter_qualification",
+  "paid_preflight": {
+    "authorized_calls": 4,
+    "calls": [
+      {
+        "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+        "envelope_cost_bound_usd": "0.007",
+        "input_per_million_usd": "0.14",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "model": "opencode-paid/deepseek-v4-flash",
+        "model_cost_bound_usd": "0.003736425",
+        "output_per_million_usd": "0.28",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.003736425"
+      },
+      {
+        "endpoint": "https://opencode.ai/zen/v1/responses",
+        "envelope_cost_bound_usd": "0.125",
+        "input_per_million_usd": "2",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "model": "opencode-paid/grok-4.5",
+        "model_cost_bound_usd": "0.0783775",
+        "output_per_million_usd": "6",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.0783775"
+      },
+      {
+        "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+        "envelope_cost_bound_usd": "0.07375",
+        "input_per_million_usd": "0.95",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "model": "opencode-paid/kimi-k2.6",
+        "model_cost_bound_usd": "0.0516043125",
+        "output_per_million_usd": "4",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.0516043125"
+      },
+      {
+        "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+        "envelope_cost_bound_usd": "0.09",
+        "input_per_million_usd": "1.4",
+        "input_token_bound": 1351,
+        "max_completion_tokens": 10000,
+        "model": "opencode-paid/glm-5.2",
+        "model_cost_bound_usd": "0.05736425",
+        "output_per_million_usd": "4.4",
+        "prompt_utf8_bytes": 327,
+        "request_cost_bound_usd": "0.05736425"
+      }
+    ],
+    "cost_bound_scope": "all_qualification_calls",
+    "exact_requests_cost_bound_usd": "0.1910824875",
+    "maximum_input_token_bound": 20000,
+    "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+    "panel_envelope_cost_bound_usd": "0.29575",
+    "price_snapshot": "2026-08-13",
+    "price_source": "https://opencode.ai/docs/zen",
+    "runtime_gate": "exact_request_before_every_paid_transport",
+    "safety_factor": "1.25"
+  },
+  "qualification_id": "paid-panel-qualification-003",
+  "source": {
+    "cli_sha256": "974fe173d744e0ac8edda7817a9ba3de1cee2362fd5e3eea9af9a327d0217fdd",
+    "model_host_sha256": "251a69daa030471cdaebddde0d4d35ccc03f91ca6fc10114e4e2e60f33bc4593",
+    "platform_system": "Windows",
+    "protocol_sha256": "371fe33b10d0db68d22e3ec3dd83536d0488c72677c362854e591b76a2ff9e8f",
+    "python_version": "3.11.9",
+    "world_sim_version": "0.9.0"
+  },
+  "status": "passed",
+  "summary": {
+    "accounted_exposure_usd": "0.00225498",
+    "cost_reporting_complete": true,
+    "models_attempted": 4,
+    "models_failed": 0,
+    "models_passed": 4,
+    "models_recorded": 4,
+    "models_requested": 4,
+    "models_skipped": 0,
+    "provider_reported_cost_usd": "0.00181583",
+    "uncached_calculated_cost_usd": "0.00225498"
+  }
+}
