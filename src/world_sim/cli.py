@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,7 @@ from .model_host import (
     DEFAULT_LIVE_TEMPERATURE,
     DEFAULT_LIVE_TIMEOUT_SECONDS,
     LIVE_REASONING_EFFORTS,
+    run_paid_adapter_qualification,
     run_live_survival,
 )
 from .models import SelectionMode, VerificationMode, WorldConfig
@@ -99,6 +101,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     survive_live.add_argument("--show-transcript", action="store_true")
     survive_live.add_argument("--output", type=Path, required=True)
 
+    qualify_live = subparsers.add_parser(
+        "qualify-live",
+        help="qualify paid model adapters without eliciting survival behavior",
+    )
+    qualify_live.add_argument(
+        "--model",
+        action="append",
+        dest="models",
+        required=True,
+        metavar="opencode-paid/MODEL",
+        help="assign one paid model to the adapter panel; repeat exactly four times",
+    )
+    qualify_live.add_argument(
+        "--max-completion-tokens",
+        type=int,
+        default=10_000,
+    )
+    qualify_live.add_argument(
+        "--temperature",
+        type=float,
+        default=DEFAULT_LIVE_TEMPERATURE,
+    )
+    qualify_live.add_argument(
+        "--max-paid-usd",
+        type=Decimal,
+        required=True,
+        help="conservative authorization ceiling for all four qualification calls",
+    )
+    qualify_live.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=300.0,
+    )
+    qualify_live.add_argument("--output", type=Path, required=True)
+
     pilot = subparsers.add_parser("pilot", help="run the Blind Commons calibration population")
     _add_run_arguments(pilot)
     pilot.add_argument("--verification", choices=[mode.value for mode in VerificationMode], required=True)
@@ -126,15 +163,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     live_output: TextIO | None = None
-    if args.command == "survive-live":
+    if args.command in {"survive-live", "qualify-live"}:
         if len(args.models) != len(CALIBRATION_NAMES):
-            parser.error("lean-camp-v1 requires exactly four model assignments")
+            parser.error(f"{args.command} requires exactly four model assignments")
         try:
             live_output = _reserve_live_output(args.output)
         except FileExistsError:
             parser.error(f"live output already exists: {args.output}")
         except OSError as error:
             parser.error(f"cannot reserve live output: {error}")
+        if args.command == "qualify-live":
+            live_output.close()
+            live_output = None
     exit_code = 0
     if args.command == "survive":
         result = run_survival_demo(
@@ -200,6 +240,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "failure": payload["failure"],
                 "provider_summary": payload["provider_summary"],
             }
+    elif args.command == "qualify-live":
+        try:
+            payload = run_paid_adapter_qualification(
+                model_refs=args.models,
+                max_completion_tokens=args.max_completion_tokens,
+                temperature=args.temperature,
+                max_paid_usd=args.max_paid_usd,
+                timeout_seconds=args.timeout_seconds,
+                checkpoint=lambda current: _replace_reserved_live_output(
+                    args.output, current
+                ),
+            )
+        except ValueError as error:
+            if _is_reserved_live_output(args.output):
+                args.output.unlink()
+            parser.error(str(error))
+        if payload["status"] != "passed":
+            exit_code = 1
+        summary = {
+            "mode": payload["mode"],
+            "status": payload["status"],
+            "qualification_id": payload["qualification_id"],
+            **payload["summary"],
+        }
     elif args.command == "pilot":
         run = run_pilot(
             verification_mode=VerificationMode(args.verification),
@@ -258,11 +322,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         raise RuntimeError(f"unsupported command {args.command!r}")
 
-    if args.output is not None and args.command != "survive-live":
+    if args.output is not None and args.command not in {"survive-live", "qualify-live"}:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         summary["output"] = str(args.output)
-    elif args.command == "survive-live":
+    elif args.command in {"survive-live", "qualify-live"}:
         summary["output"] = str(args.output)
     if args.command == "survive-live" and args.show_transcript:
         for call in payload["calls"]:
@@ -291,6 +355,32 @@ def _write_reserved_live_output(
     handle.flush()
     os.fsync(handle.fileno())
     handle.close()
+
+
+def _replace_reserved_live_output(
+    path: Path,
+    payload: Mapping[str, object],
+) -> None:
+    descriptor, raw_temp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temp_path = Path(raw_temp_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+def _is_reserved_live_output(path: Path) -> bool:
+    return path.read_text(encoding="utf-8") == '{"status":"reserved"}\n'
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:

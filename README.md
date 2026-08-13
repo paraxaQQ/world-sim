@@ -123,9 +123,58 @@ py -3.11 tools\verify_live_artifact.py `
 
 OpenCode currently lists several time-limited [free Zen models](https://opencode.ai/docs/zen). Availability can change.
 
-## run the paid four-model observation
+## qualify the paid four-model panel
 
-The model protocol is strict JSON:
+The first two paid episodes were technically incomplete. MiniMax M3 exhausted the original 1,024-token allowance in v0.6.0, then its 10,000-token v0.7.0 request returned HTTP 400. Neither chance resolved, so those artifacts contain no world-level social behavior. MiniMax is excluded for an unproven production wire, not for anything it chose in the world. The [v0.6.0 proof](outputs/v0.6.0-paid-observation-29995-proof.md) and [v0.7.0 proof](outputs/v0.7.0-paid-reasoning-29994-proof.md) retain the exact failures.
+
+v0.8.0 replaces that seat with Grok 4.6 and adds a separate adapter qualification. The probe contains no names, energy, peers, actions, scarcity, or survival framing. Each model receives the same request to return this fixed object:
+
+```json
+{"protocol":"world-sim-adapter-v1","ok":true}
+```
+
+The panel is frozen in this order:
+
+| planned public name | hidden model assignment | production API |
+| --- | --- | --- |
+| Aster | `opencode-paid/deepseek-v4-flash` | Chat Completions |
+| Birch | `opencode-paid/grok-4.6` | Responses |
+| Cinder | `opencode-paid/kimi-k2.6` | Chat Completions |
+| Lumen | `opencode-paid/glm-5.2` | Chat Completions |
+
+The runner makes one call per model, never retries, continues after a model-local failure while the cost authorization remains available, and passes only at 4/4. A provider cost-bound breach can stop later transport; those models receive explicit `paid_budget_exhausted` records. The CLI atomically checkpoints the artifact before and after every call. It uses the production endpoint, output-cap field, JSON mode, envelope parser, usage parser, and cost parser for every model. Grok receives a strict JSON schema through the Responses API. The other models receive JSON-object mode plus the exact object in the prompt.
+
+Put the authorized OpenCode Zen key on the clipboard, then run:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:OPENCODE_ZEN_API_KEY = (Get-Clipboard -Raw).Trim()
+try {
+  py -3.11 -m world_sim qualify-live `
+    --model opencode-paid/deepseek-v4-flash `
+    --model opencode-paid/grok-4.6 `
+    --model opencode-paid/kimi-k2.6 `
+    --model opencode-paid/glm-5.2 `
+    --max-completion-tokens 10000 `
+    --temperature 0.2 `
+    --max-paid-usd 0.30 `
+    --timeout-seconds 300 `
+    --output outputs\v0.8.0-paid-panel-qualification-001.json
+} finally {
+  Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
+  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+}
+```
+
+The current [OpenCode Zen model table](https://opencode.ai/docs/zen) lists Grok 4.6 on `/zen/v1/responses` at `$2` per million input tokens and `$6` per million output tokens below 200,000 input tokens. At the pinned panel prices, a 20,000-input-token and 10,000-output-token envelope costs at most `$0.29575` across these four calls after the host's 1.25 safety factor. The qualification therefore authorizes `$0.30`.
+
+That number is a local request bound, not a card-charge guarantee. A timeout can be billed, prices can change, and Zen auto-reload is outside the process. Disable auto-reload or set an account-level limit if card-level control matters.
+
+See the [frozen qualification protocol](outputs/v0.8.0-paid-panel-qualification-protocol.md) for the exact prompts, pass conditions, cost derivation, and stopping rules. Qualification consumes no experiment seed. Behavioral seed `29993` remains unopened unless all four adapters pass.
+
+If the panel passes, the next one-cycle survival episode can authorize at most `$1.19` for 16 calls under the same 20,000-input-token and 10,000-output-token envelope. The repository hard ceiling is `$1.20`. We freeze that behavioral command only after qualification, then run seed `29993` once without provider retries, response repairs, or behavior-based reruns.
+
+The model protocol remains strict JSON:
 
 ```json
 {
@@ -134,74 +183,9 @@ The model protocol is strict JSON:
 }
 ```
 
-Every prompt includes the exact response schema. The host sends no tools, makes no repair call, and stops on transport or provider-envelope failure. A malformed action wastes that chance and cannot count as rest. Invalid speech becomes silence without discarding a valid action.
+Every survival prompt includes the exact response schema. The host sends no tools and makes no repair call. A malformed action wastes that chance and cannot count as rest. Invalid speech becomes silence without discarding a valid action.
 
-The first paid observation uses one fixed mapping and these request controls:
-
-| public name | hidden model assignment | request control |
-| --- | --- | --- |
-| Aster | `opencode-paid/deepseek-v4-flash` | thinking disabled; temperature `0.2` |
-| Birch | `opencode-paid/minimax-m3` | provider default; no documented M3 thinking control |
-| Cinder | `opencode-paid/kimi-k2.6` | thinking disabled; provider-fixed temperature |
-| Lumen | `opencode-paid/glm-5.2` | thinking disabled; temperature `0.2` |
-
-Use a fresh key in `OPENCODE_ZEN_API_KEY`. Never put the key in the command, an artifact, `.env`, or Git. If card-charge control matters, disable Zen auto-reload before the run; the local ceiling controls model-request usage, not account reloads. This command authorizes exactly one exploratory cycle with communication enabled:
-
-```powershell
-$env:PYTHONPATH = "src"
-$env:OPENCODE_ZEN_API_KEY = (Get-Clipboard -Raw).Trim()
-try {
-  py -3.11 -m world_sim survive-live `
-    --model opencode-paid/deepseek-v4-flash `
-    --model opencode-paid/minimax-m3 `
-    --model opencode-paid/kimi-k2.6 `
-    --model opencode-paid/glm-5.2 `
-    --preset lean-camp-v1 `
-    --seed 29995 --cycles 1 `
-    --max-calls 16 --require-complete-budget `
-    --max-completion-tokens 1024 `
-    --temperature 0.2 `
-    --reasoning-effort compatibility-first `
-    --max-paid-usd 0.18 `
-    --timeout-seconds 120 `
-    --show-transcript `
-    --output outputs\v0.6.0-paid-observation-29995.json
-  if ($LASTEXITCODE -ne 0) {
-    throw "paid observation failed; preserve the artifact and do not retry"
-  }
-} finally {
-  Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
-  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
-}
-```
-
-`--max-calls 16` covers the four survivors across all four chances. It is a hard request ceiling, not an expected count; survivors that rest early receive no later calls. Before each paid request, the host prices the exact current message payload plus the full 1,024-token output allowance. It refuses the request before transport if that bound plus accounted earlier cost would exceed `$0.18`. The gate assumes the pinned prices remain current, the 1,024-token input allowance covers the hidden chat template, and the provider honors the output cap. A timeout can still be billed; its artifact retains the authorized exposure.
-
-Run this episode once. Do not retry a failed provider call, repair a malformed response, or rerun because no one speaks, transfers resources, or chooses an interesting action. Preserve the artifact either way.
-
-This run can describe actions from one seed and one fixed name-to-model mapping. It cannot establish a model ranking, stable model traits, cooperation, or the effect of communication. Speech remains observable, but this episode has no silent control. See the [frozen paid-observation protocol](outputs/v0.6.0-paid-observation-protocol.md) before running it.
-
-The frozen episode ran once on 2026-08-13. Aster returned `forage`; Birch then exhausted MiniMax M3's 1,024-token completion budget. The host stopped after two paid calls, before the simultaneous chance resolved, and did not contact Kimi or GLM. No action, message, or costly social behavior entered the world. The provider reported `$0.00173748` total cost. See the [failure proof](outputs/v0.6.0-paid-observation-29995-proof.md) and [retained artifact](outputs/v0.6.0-paid-observation-29995.json).
-
-That failure does not show that models cannot be concise or decide quickly. The 500-character cap applied only to optional speech. MiniMax's reasoning and final JSON shared the 1,024-token completion allowance, and the episode recorded no latency endpoint.
-
-## run the 10k reasoning follow-up
-
-The v0.7.0 follow-up keeps the world and 500-character speech cap unchanged. It raises the explicit completion ceiling to 10,000 total tokens, including reasoning and final output, and lets all four models use provider-default reasoning. Ordinary live runs still default to 4,096 tokens.
-
-Use seed `29994`, a 16-call ceiling, a 300-second per-call timeout, and the `$0.80` hard cost authorization. MiniMax receives `reasoning_split: true` so its reasoning is separated from the strict final JSON. No provider receives a reasoning-disable control.
-
-The frozen protocol defines the primary outcome as the occurrence, count, and ordered trace of resolved `give_food` or `give_wood` actions. Each must cost the actor 1 energy and transfer at least one resource. Technical failure makes the episode incomplete; it does not count as zero social behavior. See the [v0.7.0 paid reasoning protocol](outputs/v0.7.0-paid-reasoning-protocol.md) for the exact command, cost derivation, stopping rule, and claim boundary.
-
-The follow-up ran once on 2026-08-13. Aster returned `gather_wood` with a broadcast about gathering wood for shelter. Birch's MiniMax M3 request then returned HTTP 400. The host stopped before the simultaneous chance resolved and did not contact Kimi or GLM. No action, message, energy cost, or transfer entered the world. See the [v0.7.0 failure proof](outputs/v0.7.0-paid-reasoning-29994-proof.md) and [retained artifact](outputs/v0.7.0-paid-reasoning-29994.json).
-
-The host accepts:
-
-- `opencode/MODEL` for `-free` Zen models
-- `opencode-go/MODEL` for the Go endpoint
-- `opencode-paid/MODEL` for the pinned paid allowlist
-
-GLM receives its documented [JSON-object response mode](https://docs.z.ai/api-reference/llm/chat-completion) plus the full response schema in its prompt. In `compatibility-first`, DeepSeek, Kimi, and GLM receive their documented direct-answer controls. MiniMax M3 uses provider defaults because its current public documentation does not define an M3 thinking control. The strict parser remains the final authority.
+The host accepts `opencode/MODEL` for `-free` Zen models, `opencode-go/MODEL` for the Go endpoint, and `opencode-paid/MODEL` for the pinned paid allowlist. The strict local parser remains the final authority for every route.
 
 ## repository map
 

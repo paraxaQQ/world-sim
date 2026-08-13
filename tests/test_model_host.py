@@ -35,8 +35,9 @@ FREE_MODELS = tuple(f"opencode/{name}-free" for name in TEST_MODEL_NAMES)
 GO_MODELS = tuple(f"opencode-go/{name}" for name in TEST_MODEL_NAMES)
 PAID_MODELS = tuple(
     f"opencode-paid/{name}"
-    for name in ("deepseek-v4-flash", "minimax-m3", "kimi-k2.6", "glm-5.2")
+    for name in ("deepseek-v4-flash", "grok-4.6", "kimi-k2.6", "glm-5.2")
 )
+GROK_MODELS = ("opencode-paid/grok-4.6",) * 4
 REST_REPLY = '{"action":{"kind":"rest"},"say":null}'
 
 
@@ -71,6 +72,65 @@ def response(
         status=200,
         headers={"x-request-id": request_id},
         body=json.dumps(payload),
+    )
+
+
+def responses_response(
+    content: str,
+    *,
+    request_id: str = "request-1",
+    cost: str | None = None,
+    cost_in_usage: bool = False,
+    status: str = "completed",
+) -> TransportResponse:
+    usage: dict[str, object] = {
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "total_tokens": 120,
+        "output_tokens_details": {"reasoning_tokens": 15},
+    }
+    if cost is not None and cost_in_usage:
+        usage["cost"] = cost
+    payload: dict[str, object] = {
+        "object": "response",
+        "model": "fake-model",
+        "status": status,
+        "error": None,
+        "output": [
+            {"type": "reasoning", "status": "completed"},
+            {
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": content}],
+            },
+        ],
+        "usage": usage,
+        "incomplete_details": None,
+    }
+    if cost is not None and not cost_in_usage:
+        payload["cost"] = cost
+    return TransportResponse(
+        status=200,
+        headers={"x-request-id": request_id},
+        body=json.dumps(payload),
+    )
+
+
+def paid_panel_response(
+    index: int,
+    content: str,
+    *,
+    request_id: str = "request-1",
+    cost: str | None = None,
+    cost_in_usage: bool = False,
+) -> TransportResponse:
+    factory = responses_response if index % len(PAID_MODELS) == 1 else response
+    return factory(
+        content,
+        request_id=request_id,
+        cost=cost,
+        cost_in_usage=cost_in_usage,
     )
 
 
@@ -349,7 +409,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.7.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.0")
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -473,13 +533,14 @@ class ModelHostTests(unittest.TestCase):
         secret = "paid-zen-key-not-for-the-artifact"
         models = (
             "deepseek-v4-flash",
-            "minimax-m3",
+            "grok-4.6",
             "kimi-k2.6",
             "glm-5.2",
         )
         transport = FakeTransport(
             [
-                response(
+                paid_panel_response(
+                    index,
                     '{"action":{"kind":"rest"},"say":null}',
                     cost=cost,
                     cost_in_usage=index % 2 == 0,
@@ -493,7 +554,7 @@ class ModelHostTests(unittest.TestCase):
             max_calls=4,
             max_completion_tokens=1_024,
             reasoning_effort="low",
-            max_paid_usd="0.05",
+            max_paid_usd="0.06",
             transport=transport,
             auth_path=Path("missing.json"),
             environ={"OPENCODE_ZEN_API_KEY": f" {secret} "},
@@ -502,10 +563,10 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["status"], "completed")
         self.assertEqual(artifact["format_version"], 3)
         self.assertEqual(len(transport.requests), 4)
-        self.assertEqual(artifact["config"]["max_paid_usd"], "0.05")
+        self.assertEqual(artifact["config"]["max_paid_usd"], "0.06")
         self.assertLessEqual(
             Decimal(artifact["paid_preflight"]["first_chance_cost_bound_usd"]),
-            Decimal("0.05"),
+            Decimal("0.06"),
         )
         self.assertEqual(
             artifact["provider_summary"]["provider_reported_cost_usd"], "0.01"
@@ -513,7 +574,7 @@ class ModelHostTests(unittest.TestCase):
         self.assertTrue(artifact["provider_summary"]["cost_reporting_complete"])
         self.assertEqual(
             artifact["provider_summary"]["uncached_calculated_cost_usd"],
-            "0.0004766",
+            "0.0007426",
         )
         self.assertEqual(
             [request["api_key"] for request in transport.requests],
@@ -522,9 +583,14 @@ class ModelHostTests(unittest.TestCase):
         for request, model in zip(transport.requests, models, strict=True):
             endpoint = request["endpoint"]
             self.assertIsInstance(endpoint, EndpointSpec)
-            self.assertEqual(endpoint.url, "https://opencode.ai/zen/v1/chat/completions")
+            expected_path = (
+                "/zen/v1/responses"
+                if model == "grok-4.6"
+                else "/zen/v1/chat/completions"
+            )
+            self.assertEqual(endpoint.url, f"https://opencode.ai{expected_path}")
             self.assertEqual(request["body"]["model"], model)
-        deepseek, minimax, kimi, glm = (
+        deepseek, grok, kimi, glm = (
             request["body"] for request in transport.requests
         )
         self.assertEqual(
@@ -540,14 +606,16 @@ class ModelHostTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            set(minimax),
+            set(grok),
             {
                 "model",
-                "messages",
-                "max_completion_tokens",
-                "reasoning_split",
+                "input",
+                "max_output_tokens",
                 "temperature",
+                "text",
+                "reasoning",
                 "stream",
+                "store",
             },
         )
         self.assertEqual(
@@ -564,13 +632,113 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertEqual(set(glm), set(deepseek))
         self.assertEqual(deepseek["reasoning_effort"], "low")
+        self.assertEqual(grok["reasoning"], {"effort": "low"})
+        self.assertEqual(grok["text"]["format"]["type"], "json_schema")
         self.assertEqual(glm["reasoning_effort"], "low")
+        grok_authorization = artifact["calls"][1]["cost_authorization"]
+        self.assertEqual(grok_authorization["max_completion_tokens"], 1_024)
+        self.assertEqual(
+            grok_authorization["prompt_utf8_bytes"],
+            len(
+                json.dumps(
+                    grok["input"],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
+        )
+        self.assertEqual(
+            artifact["provider_summary"]["provider_reported_usage"],
+            {
+                "prompt_tokens": 400,
+                "completion_tokens": 80,
+                "reasoning_tokens": 60,
+                "total_tokens": 480,
+            },
+        )
         self.assertNotIn(secret, json.dumps(artifact))
+
+    def test_grok_responses_incomplete_budget_retains_cost_without_mutation(
+        self,
+    ) -> None:
+        exhausted = json.loads(
+            responses_response(REST_REPLY, cost="0.001", status="incomplete").body
+        )
+        exhausted["incomplete_details"] = {"reason": "max_output_tokens"}
+        artifact = run_live_survival(
+            model_refs=GROK_MODELS,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.10",
+            transport=FakeTransport(
+                [TransportResponse(200, {}, json.dumps(exhausted))]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["failure"]["kind"], "completion_budget_exhausted")
+        self.assertEqual(artifact["provider_summary"]["calls_attempted"], 1)
+        self.assertEqual(
+            artifact["provider_summary"]["provider_reported_cost_usd"], "0.001"
+        )
+        self.assertEqual(artifact["partial_state"]["day"], 0)
+        self.assertFalse(
+            any(
+                event["kind"] == "choice_submitted"
+                for event in artifact["partial_state"]["events"]
+            )
+        )
+
+    def test_grok_responses_rejects_unsupported_output_item(self) -> None:
+        malformed = json.loads(responses_response(REST_REPLY, cost="0.001").body)
+        malformed["output"].insert(1, {"type": "function_call"})
+        artifact = run_live_survival(
+            model_refs=GROK_MODELS,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.10",
+            transport=FakeTransport(
+                [TransportResponse(200, {}, json.dumps(malformed))]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["failure"]["kind"], "provider_envelope_error")
+        self.assertEqual(artifact["partial_state"]["day"], 0)
+        self.assertNotIn("raw_body", artifact["calls"][0]["response"])
+
+    def test_grok_responses_rejects_conflicting_usage_aliases(self) -> None:
+        for conflicting_field, value in (
+            ("prompt_tokens", 101),
+            ("completion_tokens", 21),
+        ):
+            with self.subTest(conflicting_field):
+                conflicting = json.loads(
+                    responses_response(REST_REPLY, cost="0.001").body
+                )
+                conflicting["usage"][conflicting_field] = value
+                artifact = run_live_survival(
+                    model_refs=GROK_MODELS,
+                    days=1,
+                    max_calls=4,
+                    max_completion_tokens=1_024,
+                    max_paid_usd="0.10",
+                    transport=FakeTransport(
+                        [TransportResponse(200, {}, json.dumps(conflicting))]
+                    ),
+                    environ={"OPENCODE_ZEN_API_KEY": "secret"},
+                )
+
+                self.assertEqual(artifact["failure"]["kind"], "provider_cost_error")
+                self.assertEqual(artifact["partial_state"]["day"], 0)
 
     def test_paid_complete_cycle_authorizes_each_request_and_replays(self) -> None:
         transport = FakeTransport(
             [
-                response(
+                paid_panel_response(
+                    index - 1,
                     '{"action":{"kind":"forage"},"say":null}',
                     request_id=f"paid-cycle-{index}",
                     cost="0.001",
@@ -586,14 +754,14 @@ class ModelHostTests(unittest.TestCase):
             max_calls=16,
             require_complete_budget=True,
             max_completion_tokens=1_024,
-            reasoning_effort="compatibility-first",
+            reasoning_effort="provider-default",
             max_paid_usd="0.18",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.7.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -645,7 +813,7 @@ class ModelHostTests(unittest.TestCase):
                         max_calls=max_calls,
                         require_complete_budget=require_complete_budget,
                         max_completion_tokens=1_024,
-                        reasoning_effort="compatibility-first",
+                        reasoning_effort="provider-default",
                         max_paid_usd="0.18",
                         transport=transport,
                         environ={},
@@ -653,20 +821,32 @@ class ModelHostTests(unittest.TestCase):
                 self.assertEqual(transport.requests, [])
 
     def test_paid_cumulative_guard_blocks_the_next_request(self) -> None:
+        choice = '{"action":{"kind":"forage"},"say":null}'
+        sizing_transport = FakeTransport(
+            [
+                paid_panel_response(index, choice, cost="0")
+                for index in range(len(PAID_MODELS))
+            ]
+        )
+        sized = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="provider-default",
+            max_paid_usd="0.18",
+            transport=sizing_transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+        request_bounds = [
+            str(call["cost_authorization"]["request_cost_bound_usd"])
+            for call in sized["calls"]
+        ]
+        first_chance_bound = sum(Decimal(bound) for bound in request_bounds)
         transport = FakeTransport(
             [
-                response(
-                    '{"action":{"kind":"forage"},"say":null}',
-                    cost=cost,
-                )
-                for cost in (
-                    "0.001",
-                    "0.003",
-                    "0.012",
-                    "0.016",
-                    "0.001",
-                    "0.003",
-                )
+                paid_panel_response(index, choice, cost=bound)
+                for index, bound in enumerate(request_bounds)
             ]
         )
 
@@ -676,8 +856,8 @@ class ModelHostTests(unittest.TestCase):
             max_calls=16,
             require_complete_budget=True,
             max_completion_tokens=1_024,
-            reasoning_effort="compatibility-first",
-            max_paid_usd="0.04",
+            reasoning_effort="provider-default",
+            max_paid_usd=str(first_chance_bound),
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
@@ -685,10 +865,12 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["status"], "failed")
         self.assertEqual(artifact["failure"]["kind"], "paid_budget_exhausted")
         self.assertIsNone(artifact["failure"]["call_sequence"])
-        self.assertEqual(len(transport.requests), 6)
-        self.assertEqual(len(artifact["calls"]), 6)
+        self.assertEqual(len(transport.requests), 4)
+        self.assertEqual(len(artifact["calls"]), 4)
         authorization = artifact["failure"]["cost_authorization"]
-        self.assertEqual(authorization["prior_accounted_cost_usd"], "0.036")
+        self.assertEqual(
+            Decimal(authorization["prior_accounted_cost_usd"]), first_chance_bound
+        )
         self.assertGreater(
             Decimal(authorization["cumulative_cost_bound_usd"]),
             Decimal(authorization["max_paid_usd"]),
@@ -704,7 +886,7 @@ class ModelHostTests(unittest.TestCase):
             separators=(",", ":"),
         )
         transport = FakeTransport(
-            [response(choice, cost="0.001") for _ in range(16)]
+            [paid_panel_response(index, choice, cost="0.001") for index in range(16)]
         )
 
         artifact = run_live_survival(
@@ -713,8 +895,8 @@ class ModelHostTests(unittest.TestCase):
             max_calls=16,
             require_complete_budget=True,
             max_completion_tokens=1_024,
-            reasoning_effort="compatibility-first",
-            max_paid_usd="0.18",
+            reasoning_effort="provider-default",
+            max_paid_usd="0.23",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
@@ -762,7 +944,7 @@ class ModelHostTests(unittest.TestCase):
             max_calls=16,
             require_complete_budget=True,
             max_completion_tokens=1_024,
-            reasoning_effort="compatibility-first",
+            reasoning_effort="provider-default",
             max_paid_usd="0.18",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -796,7 +978,7 @@ class ModelHostTests(unittest.TestCase):
             max_calls=16,
             require_complete_budget=True,
             max_completion_tokens=1_024,
-            reasoning_effort="compatibility-first",
+            reasoning_effort="provider-default",
             max_paid_usd="0.18",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -822,9 +1004,9 @@ class ModelHostTests(unittest.TestCase):
     def test_paid_compatibility_profile_uses_model_native_controls(self) -> None:
         models = (
             "deepseek-v4-flash",
-            "minimax-m3",
             "kimi-k2.6",
             "glm-5.2",
+            "deepseek-v4-flash",
         )
         transport = FakeTransport(
             [
@@ -850,27 +1032,17 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(
             artifact["config"]["reasoning_effort"], "compatibility-first"
         )
-        deepseek, minimax, kimi, glm = (
+        deepseek, kimi, glm, second_deepseek = (
             request["body"] for request in transport.requests
         )
         self.assertEqual(deepseek["thinking"], {"type": "disabled"})
         self.assertNotIn("reasoning_effort", deepseek)
-        self.assertEqual(
-            set(minimax),
-            {
-                "model",
-                "messages",
-                "max_completion_tokens",
-                "reasoning_split",
-                "stream",
-            },
-        )
-        self.assertIs(minimax["reasoning_split"], True)
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertNotIn("temperature", kimi)
         self.assertEqual(glm["thinking"], {"type": "disabled"})
         self.assertEqual(glm["response_format"], {"type": "json_object"})
         self.assertNotIn("reasoning_effort", glm)
+        self.assertEqual(second_deepseek["thinking"], {"type": "disabled"})
 
         public_names = ("Aster", "Birch", "Cinder", "Lumen")
         world = make_survival_world(public_names, seed=17)
@@ -899,20 +1071,36 @@ class ModelHostTests(unittest.TestCase):
             )
             self.assertNotIn(model, json.dumps(messages))
 
+    def test_paid_compatibility_profile_rejects_grok_before_transport(self) -> None:
+        transport = FakeTransport([])
+        with self.assertRaisesRegex(ValueError, "grok-4.6 reasoning cannot be disabled"):
+            run_live_survival(
+                model_refs=PAID_MODELS,
+                days=1,
+                max_calls=4,
+                max_completion_tokens=1_024,
+                reasoning_effort="compatibility-first",
+                max_paid_usd="0.18",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "secret"},
+            )
+        self.assertEqual(transport.requests, [])
+
     def test_paid_provider_default_omits_reasoning_controls(self) -> None:
         models = (
             "deepseek-v4-flash",
-            "minimax-m3",
+            "grok-4.6",
             "kimi-k2.6",
             "glm-5.2",
         )
         transport = FakeTransport(
             [
-                response(
+                paid_panel_response(
+                    index,
                     '{"action":{"kind":"rest"},"say":null}',
                     cost="0.001",
                 )
-                for _ in models
+                for index, _ in enumerate(models)
             ]
         )
         artifact = run_live_survival(
@@ -921,7 +1109,7 @@ class ModelHostTests(unittest.TestCase):
             max_calls=4,
             max_completion_tokens=10_000,
             reasoning_effort="provider-default",
-            max_paid_usd="0.18",
+            max_paid_usd="0.23",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
@@ -931,17 +1119,16 @@ class ModelHostTests(unittest.TestCase):
             body = request["body"]
             self.assertNotIn("reasoning_effort", body)
             self.assertNotIn("thinking", body)
-        deepseek, minimax, kimi, glm = (
+            self.assertNotIn("reasoning", body)
+        deepseek, grok, kimi, glm = (
             request["body"] for request in transport.requests
         )
         self.assertEqual(deepseek["max_tokens"], 10_000)
-        self.assertEqual(minimax["max_completion_tokens"], 10_000)
-        self.assertIs(minimax["reasoning_split"], True)
+        self.assertEqual(grok["max_output_tokens"], 10_000)
+        self.assertEqual(grok["text"]["format"]["type"], "json_schema")
+        self.assertFalse(grok["store"])
         self.assertEqual(kimi["max_completion_tokens"], 10_000)
         self.assertEqual(glm["max_tokens"], 10_000)
-        self.assertNotIn("reasoning_split", deepseek)
-        self.assertNotIn("reasoning_split", kimi)
-        self.assertNotIn("reasoning_split", glm)
 
     def test_paid_10k_ceiling_covers_a_maximum_speech_cycle(self) -> None:
         maximum_speech = "\U00010000" * 500
@@ -953,7 +1140,7 @@ class ModelHostTests(unittest.TestCase):
             separators=(",", ":"),
         )
         sizing_transport = FakeTransport(
-            [response(choice, cost="0") for _ in range(16)]
+            [paid_panel_response(index, choice, cost="0") for index in range(16)]
         )
         sized = run_live_survival(
             model_refs=PAID_MODELS,
@@ -963,7 +1150,7 @@ class ModelHostTests(unittest.TestCase):
             require_complete_budget=True,
             max_completion_tokens=10_000,
             reasoning_effort="provider-default",
-            max_paid_usd="0.80",
+            max_paid_usd="1.20",
             timeout_seconds=300,
             transport=sizing_transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -974,7 +1161,10 @@ class ModelHostTests(unittest.TestCase):
         ]
 
         bounded_transport = FakeTransport(
-            [response(choice, cost=bound) for bound in request_bounds]
+            [
+                paid_panel_response(index, choice, cost=bound)
+                for index, bound in enumerate(request_bounds)
+            ]
         )
         bounded = run_live_survival(
             model_refs=PAID_MODELS,
@@ -984,7 +1174,7 @@ class ModelHostTests(unittest.TestCase):
             require_complete_budget=True,
             max_completion_tokens=10_000,
             reasoning_effort="provider-default",
-            max_paid_usd="0.80",
+            max_paid_usd="1.20",
             timeout_seconds=300,
             transport=bounded_transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -994,8 +1184,8 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(bounded["status"], "completed")
         self.assertEqual(len(bounded_transport.requests), 16)
         total_bound = sum(Decimal(bound) for bound in request_bounds)
-        self.assertGreater(total_bound, Decimal("0.65"))
-        self.assertLess(total_bound, Decimal("0.80"))
+        self.assertGreater(total_bound, Decimal("0.85"))
+        self.assertLess(total_bound, Decimal("1.20"))
         self.assertEqual(
             Decimal(
                 bounded["calls"][-1]["cost_authorization"][
@@ -1040,7 +1230,7 @@ class ModelHostTests(unittest.TestCase):
             ({}, "max_paid_usd is required"),
             ({"max_paid_usd": "0"}, "positive finite decimal"),
             ({"max_paid_usd": "NaN"}, "positive finite decimal"),
-            ({"max_paid_usd": "0.801"}, "cannot exceed 0.8 USD"),
+            ({"max_paid_usd": "1.201"}, "cannot exceed 1.2 USD"),
             (
                 {"max_paid_usd": "0.18", "max_completion_tokens": 10_001},
                 "max_completion_tokens must be from 1 through 10000",
@@ -1094,7 +1284,7 @@ class ModelHostTests(unittest.TestCase):
                     days=1,
                     max_calls=4,
                     max_completion_tokens=1_024,
-                    max_paid_usd="0.05",
+                    max_paid_usd="0.06",
                     transport=FakeTransport([provider_response]),
                     environ={"OPENCODE_ZEN_API_KEY": "secret"},
                 )
@@ -1123,11 +1313,13 @@ class ModelHostTests(unittest.TestCase):
             days=1,
             max_calls=4,
             max_completion_tokens=1_024,
-            max_paid_usd="0.05",
+            max_paid_usd="0.06",
             transport=FakeTransport(
                 [
                     TransportResponse(200, {}, exact_body),
-                    *[response(REST_REPLY, cost="0") for _ in range(3)],
+                    responses_response(REST_REPLY, cost="0"),
+                    response(REST_REPLY, cost="0"),
+                    response(REST_REPLY, cost="0"),
                 ]
             ),
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
@@ -1147,7 +1339,7 @@ class ModelHostTests(unittest.TestCase):
             days=1,
             max_calls=4,
             max_completion_tokens=1_024,
-            max_paid_usd="0.05",
+            max_paid_usd="0.06",
             transport=FakeTransport([conflict]),
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
@@ -1169,7 +1361,7 @@ class ModelHostTests(unittest.TestCase):
             days=1,
             max_calls=4,
             max_completion_tokens=1_024,
-            max_paid_usd="0.05",
+            max_paid_usd="0.06",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )

@@ -5,7 +5,7 @@ import http.client
 import json
 import os
 import platform
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -20,12 +20,16 @@ from .survival.engine import (
     survival_view_for,
 )
 from .survival.models import DEFAULT_SURVIVOR_NAMES, SurvivalConfig, SurvivorView
-from .survival.prompt import render_system_prompt, render_turn_prompt
-from .survival.protocol import MODEL_MAX_COMPLETION_TOKENS, parse_model_response
+from .survival.prompt import render_system_prompt, render_turn_prompt, response_schema
+from .survival.protocol import (
+    MODEL_MAX_COMPLETION_TOKENS,
+    parse_model_response,
+    parse_strict_model_json,
+)
 
 
-ADAPTER_NAME = "opencode-direct-chat-completions"
-WORLD_SIM_VERSION = "0.7.0"
+ADAPTER_NAME = "opencode-direct-model-apis"
+WORLD_SIM_VERSION = "0.8.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -37,8 +41,27 @@ PAID_ZEN_PRICE_SNAPSHOT = "2026-08-13"
 PAID_ZEN_PRICE_SOURCE = "https://opencode.ai/docs/zen"
 PAID_ZEN_PRICE_SAFETY_FACTOR = Decimal("1.25")
 PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS = 1_024
-PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.80")
+PAID_MAX_INPUT_TOKEN_BOUND = 20_000
+PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("1.20")
+QUALIFICATION_MAX_AUTHORIZATION_USD = Decimal("0.30")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
+USD_COST_TICKS_PER_USD = Decimal("10000000000")
+QUALIFICATION_ID = "paid-panel-qualification-001"
+QUALIFICATION_PROTOCOL = "world-sim-adapter-v1"
+QUALIFICATION_SYSTEM_PROMPT = (
+    "You are performing an API compatibility check, not a game or decision task.\n"
+    "Return exactly one JSON object and nothing else. Do not explain your answer."
+)
+QUALIFICATION_USER_PROMPT = (
+    "Return an object with exactly these keys and literal values:\n"
+    '{"protocol":"world-sim-adapter-v1","ok":true}'
+)
+PAID_QUALIFICATION_MODELS = (
+    "opencode-paid/deepseek-v4-flash",
+    "opencode-paid/grok-4.6",
+    "opencode-paid/kimi-k2.6",
+    "opencode-paid/glm-5.2",
+)
 
 
 @dataclass(frozen=True)
@@ -49,7 +72,7 @@ class ModelPrice:
 
 PAID_ZEN_PRICES = {
     "deepseek-v4-flash": ModelPrice(Decimal("0.14"), Decimal("0.28")),
-    "minimax-m3": ModelPrice(Decimal("0.30"), Decimal("1.20")),
+    "grok-4.6": ModelPrice(Decimal("2.00"), Decimal("6.00")),
     "kimi-k2.6": ModelPrice(Decimal("0.95"), Decimal("4.00")),
     "glm-5.2": ModelPrice(Decimal("1.40"), Decimal("4.40")),
 }
@@ -61,6 +84,7 @@ class EndpointSpec:
     host: str
     path: str
     requires_api_key: bool
+    api_style: str
 
     @property
     def url(self) -> str:
@@ -69,15 +93,19 @@ class EndpointSpec:
 
 _ENDPOINTS = {
     "opencode": EndpointSpec(
-        "opencode", "opencode.ai", "/zen/v1/chat/completions", False
+        "opencode", "opencode.ai", "/zen/v1/chat/completions", False, "chat"
     ),
     "opencode-go": EndpointSpec(
-        "opencode-go", "opencode.ai", "/zen/go/v1/chat/completions", True
+        "opencode-go", "opencode.ai", "/zen/go/v1/chat/completions", True, "chat"
     ),
     "opencode-paid": EndpointSpec(
-        "opencode-paid", "opencode.ai", "/zen/v1/chat/completions", True
+        "opencode-paid", "opencode.ai", "/zen/v1/chat/completions", True, "chat"
     ),
 }
+
+_PAID_RESPONSES_ENDPOINT = EndpointSpec(
+    "opencode-paid", "opencode.ai", "/zen/v1/responses", True, "responses"
+)
 
 
 @dataclass(frozen=True)
@@ -168,7 +196,17 @@ class _PaidBudget:
         authorization["cumulative_accounted_cost_usd"] = _decimal_text(
             self.accounted
         )
+        authorization["accounting_basis"] = "provider_or_calculated_cost"
         return actual <= Decimal(str(authorization["request_cost_bound_usd"]))
+
+    def reserve_failed_request(self, authorization: dict[str, str | int]) -> None:
+        reserved = Decimal(str(authorization["request_cost_bound_usd"]))
+        self.accounted += reserved
+        authorization["accounted_cost_usd"] = _decimal_text(reserved)
+        authorization["cumulative_accounted_cost_usd"] = _decimal_text(
+            self.accounted
+        )
+        authorization["accounting_basis"] = "authorized_bound_after_failure"
 
 
 @dataclass(frozen=True)
@@ -333,7 +371,9 @@ class _LiveProvider(SurvivalChoiceProvider):
                 cost_authorization,
             )
         try:
-            content, metadata = _parse_envelope(response.body)
+            content, metadata = _parse_envelope(
+                response.body, api_style=self.assignment.endpoint.api_style
+            )
         except EnvelopeFailure as error:
             self._fail(
                 view,
@@ -709,6 +749,479 @@ def run_live_survival(
     }
 
 
+def run_paid_adapter_qualification(
+    *,
+    model_refs: Sequence[str],
+    max_completion_tokens: int = MODEL_MAX_COMPLETION_TOKENS,
+    temperature: float = DEFAULT_LIVE_TEMPERATURE,
+    max_paid_usd: Decimal | str = QUALIFICATION_MAX_AUTHORIZATION_USD,
+    timeout_seconds: float = 300.0,
+    transport: ChatTransport | None = None,
+    environ: Mapping[str, str] | None = None,
+    checkpoint: Callable[[Mapping[str, object]], None] | None = None,
+) -> dict[str, Any]:
+    assignments = _assign_models(model_refs)
+    _validate_qualification_config(
+        assignments,
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        max_paid_usd=max_paid_usd,
+        timeout_seconds=timeout_seconds,
+    )
+    requests = tuple(
+        _build_qualification_request(
+            assignment,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+        )
+        for assignment in assignments
+    )
+    paid_limit, paid_preflight = _qualification_preflight(
+        assignments, requests, max_paid_usd=max_paid_usd
+    )
+    active_environ = os.environ if environ is None else environ
+    zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
+    if zen_key is None:
+        raise ValueError("paid Zen models require OPENCODE_ZEN_API_KEY")
+
+    budget = _PaidBudget(paid_limit)
+    active_transport = transport or StdlibChatTransport()
+    calls: list[dict[str, object]] = []
+
+    def artifact(*, status: str) -> dict[str, Any]:
+        return _qualification_artifact(
+            assignments=assignments,
+            model_refs=model_refs,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            paid_limit=paid_limit,
+            paid_preflight=paid_preflight,
+            calls=calls,
+            budget=budget,
+            status=status,
+        )
+
+    if checkpoint is not None:
+        checkpoint(artifact(status="running"))
+    for index, (assignment, request) in enumerate(
+        zip(assignments, requests, strict=True), start=1
+    ):
+        def checkpoint_authorized(
+            authorized_call: Mapping[str, object],
+        ) -> None:
+            if checkpoint is None:
+                return
+            calls.append(dict(authorized_call))
+            try:
+                checkpoint(artifact(status="running"))
+            finally:
+                calls.pop()
+
+        calls.append(
+            _run_qualification_call(
+            assignment,
+            request,
+            sequence=index,
+            transport=active_transport,
+            api_key=zen_key,
+            timeout_seconds=timeout_seconds,
+            budget=budget,
+            checkpoint_authorized=checkpoint_authorized,
+            )
+        )
+        if checkpoint is not None:
+            checkpoint(artifact(status="running"))
+    result = artifact(
+        status="passed"
+        if all(call["status"] == "passed" for call in calls)
+        else "failed"
+    )
+    if checkpoint is not None:
+        checkpoint(result)
+    return result
+
+
+def _qualification_artifact(
+    *,
+    assignments: Sequence[_Assignment],
+    model_refs: Sequence[str],
+    max_completion_tokens: int,
+    temperature: float,
+    timeout_seconds: float,
+    paid_limit: Decimal,
+    paid_preflight: Mapping[str, object],
+    calls: Sequence[Mapping[str, object]],
+    budget: _PaidBudget,
+    status: str,
+) -> dict[str, Any]:
+    passed = sum(call["status"] == "passed" for call in calls)
+    reported_cost = _qualification_cost_total(calls, "provider_reported_cost_usd")
+    calculated_cost = _qualification_cost_total(calls, "uncached_calculated_cost_usd")
+    attempted = sum(call.get("transport_attempted") is True for call in calls)
+    return {
+        "format_version": 1,
+        "mode": "paid_adapter_qualification",
+        "status": status,
+        "qualification_id": QUALIFICATION_ID,
+        "source": {
+            "world_sim_version": WORLD_SIM_VERSION,
+            "python_version": platform.python_version(),
+            "platform_system": platform.system(),
+            "cli_sha256": _module_sha256(Path(__file__).with_name("cli.py")),
+            "model_host_sha256": _module_sha256(Path(__file__)),
+            "protocol_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "protocol.py"
+            ),
+        },
+        "config": {
+            "models": list(model_refs),
+            "max_completion_tokens": max_completion_tokens,
+            "reasoning_effort": "provider-default",
+            "temperature": temperature,
+            "timeout_seconds": timeout_seconds,
+            "attempts_per_model": 1,
+            "expected_response": {
+                "protocol": QUALIFICATION_PROTOCOL,
+                "ok": True,
+            },
+            "max_paid_usd": _decimal_text(paid_limit),
+        },
+        "paid_preflight": paid_preflight,
+        "authentication": {"opencode-paid": "bearer"},
+        "calls": calls,
+        "summary": {
+            "models_requested": len(assignments),
+            "models_recorded": len(calls),
+            "models_attempted": attempted,
+            "models_skipped": len(calls) - attempted,
+            "models_passed": passed,
+            "models_failed": sum(call["status"] == "failed" for call in calls),
+            "cost_reporting_complete": reported_cost is not None,
+            "provider_reported_cost_usd": reported_cost,
+            "uncached_calculated_cost_usd": calculated_cost,
+            "accounted_exposure_usd": _decimal_text(budget.accounted),
+        },
+    }
+
+
+def _validate_qualification_config(
+    assignments: Sequence[_Assignment],
+    *,
+    max_completion_tokens: int,
+    temperature: float,
+    max_paid_usd: Decimal | str,
+    timeout_seconds: float,
+) -> None:
+    if tuple(assignment.model_ref for assignment in assignments) != PAID_QUALIFICATION_MODELS:
+        raise ValueError(
+            "qualify-live requires the frozen paid panel in protocol order"
+        )
+    if max_completion_tokens != MODEL_MAX_COMPLETION_TOKENS:
+        raise ValueError(
+            f"qualify-live requires {MODEL_MAX_COMPLETION_TOKENS} completion tokens"
+        )
+    if temperature != DEFAULT_LIVE_TEMPERATURE:
+        raise ValueError(
+            f"qualify-live requires temperature {DEFAULT_LIVE_TEMPERATURE}"
+        )
+    if timeout_seconds != 300.0:
+        raise ValueError("qualify-live requires a 300-second timeout")
+    limit = _parse_positive_decimal(max_paid_usd, name="max_paid_usd")
+    if limit != QUALIFICATION_MAX_AUTHORIZATION_USD:
+        raise ValueError(
+            "qualify-live requires --max-paid-usd "
+            f"{_decimal_text(QUALIFICATION_MAX_AUTHORIZATION_USD)}"
+        )
+
+
+def _qualification_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": {
+            "protocol": {"const": QUALIFICATION_PROTOCOL},
+            "ok": {"const": True},
+        },
+        "required": ["protocol", "ok"],
+        "additionalProperties": False,
+    }
+
+
+def _build_qualification_request(
+    assignment: _Assignment,
+    *,
+    max_completion_tokens: int,
+    temperature: float,
+) -> dict[str, object]:
+    return _build_provider_request(
+        assignment,
+        [
+            {"role": "system", "content": QUALIFICATION_SYSTEM_PROMPT},
+            {"role": "user", "content": QUALIFICATION_USER_PROMPT},
+        ],
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        reasoning_effort=None,
+        json_schema=_qualification_schema(),
+        schema_name="adapter_qualification",
+    )
+
+
+def _qualification_preflight(
+    assignments: Sequence[_Assignment],
+    requests: Sequence[Mapping[str, object]],
+    *,
+    max_paid_usd: Decimal | str,
+) -> tuple[Decimal, dict[str, object]]:
+    limit = _parse_positive_decimal(max_paid_usd, name="max_paid_usd")
+    rows: list[dict[str, str | int]] = []
+    total = Decimal("0")
+    envelope_total = Decimal("0")
+    for assignment, request in zip(assignments, requests, strict=True):
+        price = PAID_ZEN_PRICES[assignment.model_id]
+        bound = _paid_request_bound(assignment.model_id, request)
+        total += bound.cost_bound
+        envelope_bound = (
+            (
+                Decimal(PAID_MAX_INPUT_TOKEN_BOUND) * price.input_per_million_usd
+                + Decimal(MODEL_MAX_COMPLETION_TOKENS)
+                * price.output_per_million_usd
+            )
+            / USD_PER_MILLION_TOKENS
+            * PAID_ZEN_PRICE_SAFETY_FACTOR
+        )
+        envelope_total += envelope_bound
+        rows.append(
+            {
+                "model": assignment.model_ref,
+                "endpoint": assignment.endpoint.url,
+                **bound.to_dict(),
+                "input_per_million_usd": _decimal_text(
+                    price.input_per_million_usd
+                ),
+                "output_per_million_usd": _decimal_text(
+                    price.output_per_million_usd
+                ),
+                "model_cost_bound_usd": _decimal_text(bound.cost_bound),
+                "envelope_cost_bound_usd": _decimal_text(envelope_bound),
+            }
+        )
+    if total > limit:
+        raise ValueError(
+            f"conservative paid bound {_decimal_text(total)} USD exceeds "
+            f"--max-paid-usd {_decimal_text(limit)}"
+        )
+    if envelope_total > limit:
+        raise ValueError(
+            f"panel envelope bound {_decimal_text(envelope_total)} USD exceeds "
+            f"--max-paid-usd {_decimal_text(limit)}"
+        )
+    return limit, {
+        "price_snapshot": PAID_ZEN_PRICE_SNAPSHOT,
+        "price_source": PAID_ZEN_PRICE_SOURCE,
+        "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
+        "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+        "runtime_gate": "exact_request_before_every_paid_transport",
+        "cost_bound_scope": "all_qualification_calls",
+        "maximum_input_token_bound": PAID_MAX_INPUT_TOKEN_BOUND,
+        "calls": rows,
+        "authorized_calls": len(assignments),
+        "exact_requests_cost_bound_usd": _decimal_text(total),
+        "panel_envelope_cost_bound_usd": _decimal_text(envelope_total),
+    }
+
+
+def _run_qualification_call(
+    assignment: _Assignment,
+    request: Mapping[str, object],
+    *,
+    sequence: int,
+    transport: ChatTransport,
+    api_key: str,
+    timeout_seconds: float,
+    budget: _PaidBudget,
+    checkpoint_authorized: Callable[[Mapping[str, object]], None] | None = None,
+) -> dict[str, object]:
+    authorization = budget.quote(assignment, request)
+    base: dict[str, object] = {
+        "sequence": sequence,
+        "model": assignment.model_ref,
+        "endpoint": assignment.endpoint.url,
+        "request": dict(request),
+        "cost_authorization": authorization,
+    }
+    if Decimal(str(authorization["cumulative_cost_bound_usd"])) > budget.limit:
+        return _qualification_transport_failure(
+            {**base, "transport_attempted": False},
+            kind="paid_budget_exhausted",
+            message="paid cost authorization exhausted before request",
+            response=None,
+        )
+    base["transport_attempted"] = True
+    if checkpoint_authorized is not None:
+        checkpoint_authorized({**base, "status": "in_flight"})
+    try:
+        response = transport.post(
+            assignment.endpoint,
+            request,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+    except TransportFailure as error:
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base, kind=error.kind, message=str(error), response=None
+        )
+    except Exception as error:  # noqa: BLE001 - retain a paid-call receipt.
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base,
+            kind="transport_error",
+            message=f"transport raised {type(error).__name__}",
+            response=None,
+        )
+    if response.status != 200:
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base,
+            kind="http_error",
+            message=f"provider returned HTTP {response.status}",
+            response=response,
+            model_id=assignment.model_id,
+        )
+    try:
+        content, metadata = _parse_envelope(
+            response.body, api_style=assignment.endpoint.api_style
+        )
+    except EnvelopeFailure as error:
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base,
+            kind=error.kind,
+            message=str(error),
+            response=response,
+            model_id=assignment.model_id,
+        )
+    provider_cost = metadata["provider_reported_cost_usd"]
+    if not isinstance(provider_cost, str):
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base,
+            kind="provider_cost_error",
+            message="paid response did not report its cost",
+            response=response,
+            model_id=assignment.model_id,
+            terminal_completion=True,
+        )
+    try:
+        calculated_cost = _calculate_usage_cost(
+            assignment.model_id, metadata["usage"]
+        )
+    except EnvelopeFailure as error:
+        budget.reserve_failed_request(authorization)
+        return _qualification_transport_failure(
+            base,
+            kind=error.kind,
+            message=str(error),
+            response=response,
+            model_id=assignment.model_id,
+            terminal_completion=True,
+        )
+    metadata["uncached_calculated_cost_usd"] = calculated_cost
+    within_bound = budget.account(
+        authorization,
+        provider_cost=Decimal(provider_cost),
+        calculated_cost=Decimal(calculated_cost),
+    )
+    raw_value, strict_error = parse_strict_model_json(content)
+    strict_json = strict_error is None
+    exact_schema = (
+        isinstance(raw_value, Mapping)
+        and set(raw_value) == {"protocol", "ok"}
+        and raw_value.get("protocol") == QUALIFICATION_PROTOCOL
+        and raw_value.get("ok") is True
+    )
+    model_identity = metadata["provider_model"] == assignment.model_id
+    errors: list[str] = []
+    if strict_error is not None:
+        errors.append(strict_error)
+    elif not exact_schema:
+        errors.append("model response does not match the qualification object")
+    if not model_identity:
+        errors.append("provider model identity does not match the requested model")
+    if not within_bound:
+        errors.append("provider cost exceeded the authorized request bound")
+    passed = not errors
+    return {
+        **base,
+        "status": "passed" if passed else "failed",
+        "response": {
+            "http_status": response.status,
+            "request_id": _request_id(response.headers),
+            **metadata,
+            "model_reply": content,
+        },
+        "validation": {
+            "terminal_completion": True,
+            "strict_json": strict_json,
+            "exact_schema": exact_schema,
+            "model_identity": model_identity,
+            "cost_within_bound": within_bound,
+            "errors": errors,
+        },
+    }
+
+
+def _qualification_transport_failure(
+    base: Mapping[str, object],
+    *,
+    kind: str,
+    message: str,
+    response: TransportResponse | None,
+    model_id: str | None = None,
+    terminal_completion: bool = False,
+) -> dict[str, object]:
+    receipt = _error_receipt(response) if response is not None else None
+    if receipt is not None and model_id is not None:
+        receipt.update(_paid_error_cost_receipt(response, model_id))
+    return {
+        **base,
+        "status": "failed",
+        "response": receipt,
+        "error": {
+            "kind": kind,
+            "message": message,
+            "http_status": response.status if response is not None else None,
+        },
+        "validation": {
+            "terminal_completion": terminal_completion,
+            "strict_json": False,
+            "exact_schema": False,
+            "model_identity": False,
+            "cost_within_bound": False,
+            "errors": [message],
+        },
+    }
+
+
+def _qualification_cost_total(
+    calls: Sequence[Mapping[str, object]], field_name: str
+) -> str | None:
+    if not calls:
+        return None
+    total = Decimal("0")
+    for call in calls:
+        response = call.get("response")
+        value = response.get(field_name) if isinstance(response, Mapping) else None
+        if not isinstance(value, str):
+            return None
+        try:
+            total += Decimal(value)
+        except InvalidOperation:
+            return None
+    return _decimal_text(total)
+
+
 def load_opencode_go_api_key(
     *,
     auth_path: Path | None = None,
@@ -750,17 +1263,51 @@ def _build_request(
         {"role": "system", "content": render_system_prompt(view.name)},
         {"role": "user", "content": render_turn_prompt(view)},
     ]
+    return _build_provider_request(
+        assignment,
+        messages,
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        json_schema=response_schema(view),
+        schema_name="survival_choice",
+    )
+
+
+def _build_provider_request(
+    assignment: _Assignment,
+    messages: list[dict[str, str]],
+    *,
+    max_completion_tokens: int,
+    temperature: float,
+    reasoning_effort: str | None,
+    json_schema: Mapping[str, object],
+    schema_name: str,
+) -> dict[str, object]:
     if assignment.endpoint.provider == "opencode-paid":
-        if assignment.model_id == "minimax-m3":
+        if assignment.model_id == "grok-4.6":
+            if reasoning_effort == "compatibility-first":
+                raise ValueError(
+                    "grok-4.6 reasoning cannot be disabled; use provider-default or low"
+                )
             request: dict[str, object] = {
                 "model": assignment.model_id,
-                "messages": messages,
-                "max_completion_tokens": max_completion_tokens,
-                "reasoning_split": True,
+                "input": messages,
+                "max_output_tokens": max_completion_tokens,
+                "temperature": temperature,
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema_name,
+                        "schema": dict(json_schema),
+                        "strict": True,
+                    }
+                },
                 "stream": False,
+                "store": False,
             }
-            if reasoning_effort != "compatibility-first":
-                request["temperature"] = temperature
+            if reasoning_effort is not None:
+                request["reasoning"] = {"effort": reasoning_effort}
             return request
         if assignment.model_id == "kimi-k2.6":
             request: dict[str, object] = {
@@ -812,8 +1359,10 @@ def _paid_request_bound(
             f"paid model {model_id!r} is not in the pinned price allowlist"
         ) from error
     messages = request.get("messages")
+    if messages is None:
+        messages = request.get("input")
     if not isinstance(messages, list):
-        raise ValueError("paid request has no messages list")
+        raise ValueError("paid request has no message input list")
     prompt_bytes = len(
         json.dumps(
             messages,
@@ -821,12 +1370,19 @@ def _paid_request_bound(
             separators=(",", ":"),
         ).encode("utf-8")
     )
-    completion_cap = request.get(
-        "max_completion_tokens", request.get("max_tokens")
-    )
+    completion_cap = request.get("max_completion_tokens")
+    if completion_cap is None:
+        completion_cap = request.get("max_tokens")
+    if completion_cap is None:
+        completion_cap = request.get("max_output_tokens")
     if type(completion_cap) is not int or completion_cap < 1:
         raise ValueError("paid request has no valid completion-token cap")
     input_token_bound = prompt_bytes + PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS
+    if input_token_bound > PAID_MAX_INPUT_TOKEN_BOUND:
+        raise ValueError(
+            "paid request input-token bound exceeds "
+            f"{PAID_MAX_INPUT_TOKEN_BOUND} tokens"
+        )
     call_bound = (
         (
             Decimal(input_token_bound) * provider.input_per_million_usd
@@ -959,9 +1515,14 @@ def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
             raise ValueError("the unauthenticated opencode endpoint only accepts -free models")
         if provider == "opencode-paid" and model_id.endswith("-free"):
             raise ValueError("the opencode-paid endpoint does not accept -free models")
+        endpoint = (
+            _PAID_RESPONSES_ENDPOINT
+            if provider == "opencode-paid" and model_id == "grok-4.6"
+            else _ENDPOINTS[provider]
+        )
         assignments.append(
             _Assignment(
-                f"seat-{index:03d}", name, model_ref, _ENDPOINTS[provider], model_id
+                f"seat-{index:03d}", name, model_ref, endpoint, model_id
             )
         )
     return tuple(assignments)
@@ -1001,7 +1562,9 @@ def _validate_limits(
         raise ValueError("timeout_seconds must be from 1 through 300")
 
 
-def _parse_envelope(raw_body: str) -> tuple[str, dict[str, object]]:
+def _parse_envelope(
+    raw_body: str, *, api_style: str
+) -> tuple[str, dict[str, object]]:
     try:
         payload = _strict_json(raw_body)
     except (json.JSONDecodeError, ValueError) as error:
@@ -1010,6 +1573,10 @@ def _parse_envelope(raw_body: str) -> tuple[str, dict[str, object]]:
         ) from error
     if not isinstance(payload, Mapping):
         raise EnvelopeFailure("provider_envelope_error", "provider response must be an object")
+    if api_style == "responses":
+        return _parse_responses_envelope(payload)
+    if api_style != "chat":
+        raise RuntimeError(f"unknown provider API style {api_style!r}")
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
         raise EnvelopeFailure("provider_envelope_error", "provider response has no choice object")
@@ -1036,14 +1603,100 @@ def _parse_envelope(raw_body: str) -> tuple[str, dict[str, object]]:
     }
 
 
+def _parse_responses_envelope(
+    payload: Mapping[str, object],
+) -> tuple[str, dict[str, object]]:
+    if payload.get("object") != "response":
+        raise EnvelopeFailure(
+            "provider_envelope_error", "provider response has the wrong object type"
+        )
+    status = payload.get("status")
+    if status == "incomplete":
+        details = payload.get("incomplete_details")
+        reason = details.get("reason") if isinstance(details, Mapping) else None
+        if reason in {"max_output_tokens", "max_tokens"}:
+            raise EnvelopeFailure(
+                "completion_budget_exhausted",
+                "model exhausted its completion budget before finishing an answer",
+            )
+        raise EnvelopeFailure(
+            "provider_envelope_error", "provider returned an incomplete response"
+        )
+    if status != "completed" or payload.get("error") is not None:
+        raise EnvelopeFailure(
+            "provider_envelope_error", "provider response did not complete"
+        )
+    output = payload.get("output")
+    if not isinstance(output, list):
+        raise EnvelopeFailure(
+            "provider_envelope_error", "provider response has no output list"
+        )
+    text_parts: list[str] = []
+    for item in output:
+        if not isinstance(item, Mapping):
+            raise EnvelopeFailure(
+                "provider_envelope_error", "provider output item must be an object"
+            )
+        item_type = item.get("type")
+        if item_type == "reasoning":
+            continue
+        if (
+            item_type != "message"
+            or item.get("role") != "assistant"
+            or item.get("status") != "completed"
+        ):
+            raise EnvelopeFailure(
+                "provider_envelope_error", "provider returned an unsupported output item"
+            )
+        content = item.get("content")
+        if not isinstance(content, list):
+            raise EnvelopeFailure(
+                "provider_envelope_error", "provider message has no content list"
+            )
+        for part in content:
+            if (
+                not isinstance(part, Mapping)
+                or part.get("type") != "output_text"
+                or not isinstance(part.get("text"), str)
+            ):
+                raise EnvelopeFailure(
+                    "provider_envelope_error",
+                    "provider message has unsupported content",
+                )
+            text_parts.append(str(part["text"]))
+    if not text_parts:
+        raise EnvelopeFailure(
+            "provider_envelope_error", "provider response has no output text"
+        )
+    provider_model = payload.get("model")
+    usage = payload.get("usage")
+    return "".join(text_parts), {
+        "provider_model": provider_model if isinstance(provider_model, str) else None,
+        "finish_reason": "stop",
+        "usage": dict(usage) if isinstance(usage, Mapping) else {},
+        "provider_reported_cost_usd": _provider_cost(payload, usage),
+    }
+
+
 def _provider_cost(payload: Mapping[str, object], usage: object) -> str | None:
     top_level = payload.get("cost")
     nested = usage.get("cost") if isinstance(usage, Mapping) else None
-    if top_level is None and nested is None:
+    raw_ticks = (
+        usage.get("cost_in_usd_ticks") if isinstance(usage, Mapping) else None
+    )
+    if top_level is None and nested is None and raw_ticks is None:
         return None
     values = [value for value in (top_level, nested) if value is not None]
-    parsed = tuple(_parse_nonnegative_decimal(value, name="provider cost") for value in values)
-    if len(parsed) == 2 and parsed[0] != parsed[1]:
+    parsed = [
+        _parse_nonnegative_decimal(value, name="provider cost") for value in values
+    ]
+    if raw_ticks is not None:
+        if type(raw_ticks) is not int or raw_ticks < 0:
+            raise EnvelopeFailure(
+                "provider_cost_error", "provider returned invalid USD cost ticks"
+            )
+        parsed.append(Decimal(raw_ticks) / USD_COST_TICKS_PER_USD)
+    if any(value != parsed[0] for value in parsed[1:]):
         raise EnvelopeFailure(
             "provider_cost_error", "provider returned conflicting cost values"
         )
@@ -1055,20 +1708,37 @@ def _calculate_usage_cost(model_id: str, raw_usage: object) -> str:
         raise EnvelopeFailure("provider_cost_error", "paid model has no pinned price")
     if not isinstance(raw_usage, Mapping):
         raise EnvelopeFailure("provider_cost_error", "paid response has no usage object")
-    prompt_tokens = raw_usage.get("prompt_tokens")
-    completion_tokens = raw_usage.get("completion_tokens")
-    if type(prompt_tokens) is not int or prompt_tokens < 0:
-        raise EnvelopeFailure("provider_cost_error", "paid response has invalid prompt tokens")
-    if type(completion_tokens) is not int or completion_tokens < 0:
-        raise EnvelopeFailure(
-            "provider_cost_error", "paid response has invalid completion tokens"
-        )
+    prompt_tokens = _usage_token_count(
+        raw_usage, ("prompt_tokens", "input_tokens"), name="input"
+    )
+    completion_tokens = _usage_token_count(
+        raw_usage, ("completion_tokens", "output_tokens"), name="output"
+    )
     price = PAID_ZEN_PRICES[model_id]
     calculated = (
         Decimal(prompt_tokens) * price.input_per_million_usd
         + Decimal(completion_tokens) * price.output_per_million_usd
     ) / USD_PER_MILLION_TOKENS
     return _decimal_text(calculated)
+
+
+def _usage_token_count(
+    usage: Mapping[str, object], aliases: Sequence[str], *, name: str
+) -> int:
+    values = [usage[alias] for alias in aliases if alias in usage]
+    if not values:
+        raise EnvelopeFailure(
+            "provider_cost_error", f"paid response has no {name} token count"
+        )
+    if any(type(value) is not int or value < 0 for value in values):
+        raise EnvelopeFailure(
+            "provider_cost_error", f"paid response has invalid {name} tokens"
+        )
+    if any(value != values[0] for value in values[1:]):
+        raise EnvelopeFailure(
+            "provider_cost_error", f"paid response has conflicting {name} token counts"
+        )
+    return int(values[0])
 
 
 def _parse_positive_decimal(value: object, *, name: str) -> Decimal:
@@ -1194,13 +1864,49 @@ def _sum_usage(calls: Sequence[Mapping[str, Any]], field_name: str) -> int | Non
     for call in calls:
         response = call.get("response")
         usage = response.get("usage") if isinstance(response, Mapping) else None
-        if field_name == "reasoning_tokens" and isinstance(usage, Mapping):
-            usage = usage.get("completion_tokens_details")
-        value = usage.get(field_name) if isinstance(usage, Mapping) else None
-        if type(value) is not int or value < 0:
+        if not isinstance(usage, Mapping):
+            return None
+        try:
+            if field_name == "prompt_tokens":
+                value = _usage_token_count(
+                    usage, ("prompt_tokens", "input_tokens"), name="input"
+                )
+            elif field_name == "completion_tokens":
+                value = _usage_token_count(
+                    usage, ("completion_tokens", "output_tokens"), name="output"
+                )
+            elif field_name == "reasoning_tokens":
+                value = _reasoning_token_count(usage)
+            else:
+                value = usage.get(field_name)
+                if type(value) is not int or value < 0:
+                    return None
+        except EnvelopeFailure:
             return None
         values.append(value)
     return sum(values) if values else None
+
+
+def _reasoning_token_count(usage: Mapping[str, object]) -> int:
+    values: list[object] = []
+    for name in ("completion_tokens_details", "output_tokens_details"):
+        if name not in usage:
+            continue
+        details = usage[name]
+        if not isinstance(details, Mapping) or "reasoning_tokens" not in details:
+            raise EnvelopeFailure(
+                "provider_cost_error", "provider response has invalid reasoning tokens"
+            )
+        values.append(details["reasoning_tokens"])
+    if not values or any(type(value) is not int or value < 0 for value in values):
+        raise EnvelopeFailure(
+            "provider_cost_error", "provider response has invalid reasoning tokens"
+        )
+    if any(value != values[0] for value in values[1:]):
+        raise EnvelopeFailure(
+            "provider_cost_error", "provider response has conflicting reasoning tokens"
+        )
+    return int(values[0])
 
 
 def _sum_response_decimals(

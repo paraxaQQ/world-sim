@@ -117,24 +117,9 @@ def parse_model_response(
     max_food_eaten: int,
     max_speech_chars: int,
 ) -> ParsedSurvivalChoice:
-    if not isinstance(raw_response, str):
-        return _invalid_choice("model response must be text")
-    try:
-        response_bytes = raw_response.encode("utf-8")
-    except UnicodeEncodeError as error:
-        return _invalid_choice(f"model response is not valid UTF-8 text: {error}")
-    if len(response_bytes) > MODEL_MAX_RESPONSE_BYTES:
-        return _invalid_choice(
-            f"model response exceeds {MODEL_MAX_RESPONSE_BYTES} bytes"
-        )
-    try:
-        raw_choice = json.loads(
-            raw_response,
-            object_pairs_hook=_unique_object,
-            parse_constant=_raise_invalid_constant,
-        )
-    except (json.JSONDecodeError, ValueError) as error:
-        return _invalid_choice(f"model response is not valid strict JSON: {error}")
+    raw_choice, error = parse_strict_model_json(raw_response)
+    if error is not None:
+        return _invalid_choice(error)
     return parse_survival_choice(
         raw_choice,
         actor=actor,
@@ -142,6 +127,25 @@ def parse_model_response(
         max_food_eaten=max_food_eaten,
         max_speech_chars=max_speech_chars,
     )
+
+
+def parse_strict_model_json(raw_response: object) -> tuple[object | None, str | None]:
+    if not isinstance(raw_response, str):
+        return None, "model response must be text"
+    try:
+        response_bytes = raw_response.encode("utf-8")
+    except UnicodeEncodeError as error:
+        return None, f"model response is not valid UTF-8 text: {error}"
+    if len(response_bytes) > MODEL_MAX_RESPONSE_BYTES:
+        return None, f"model response exceeds {MODEL_MAX_RESPONSE_BYTES} bytes"
+    try:
+        return json.loads(
+            raw_response,
+            object_pairs_hook=_unique_object,
+            parse_constant=_raise_invalid_constant,
+        ), None
+    except (json.JSONDecodeError, ValueError) as error:
+        return None, f"model response is not valid strict JSON: {error}"
 
 
 def _parse_action(

@@ -1,6 +1,7 @@
 outputs/v0.5.1-free-interactive-cycle-29996.json -text
 outputs/v0.6.0-paid-observation-29995.json -text
 outputs/v0.7.0-paid-reasoning-29994.json -text
+outputs/v0.8.0-paid-panel-qualification-001.json -text
 src/world_sim/cli.py text eol=lf
 src/world_sim/model_host.py text eol=lf
 src/world_sim/survival/calibration.py text eol=lf
