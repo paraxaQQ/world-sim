@@ -123,7 +123,7 @@ py -3.11 tools\verify_live_artifact.py `
 
 OpenCode currently lists several time-limited [free Zen models](https://opencode.ai/docs/zen). Availability can change.
 
-## run paid model probes
+## run the paid four-model observation
 
 The model protocol is strict JSON:
 
@@ -134,9 +134,18 @@ The model protocol is strict JSON:
 }
 ```
 
-Every prompt includes the exact response schema. The host sends no tools, makes no repair call, and stops on transport/provider-envelope failure. A malformed action wastes that chance and cannot count as rest. Invalid speech becomes silence without discarding a valid action.
+Every prompt includes the exact response schema. The host sends no tools, makes no repair call, and stops on transport or provider-envelope failure. A malformed action wastes that chance and cannot count as rest. Invalid speech becomes silence without discarding a valid action.
 
-Use `--max-calls` as authorization, not an estimate. It is checked immediately before every request. This command authorizes only the first simultaneous chance for four paid models:
+The first paid observation uses one fixed mapping and these request controls:
+
+| public name | hidden model assignment | request control |
+| --- | --- | --- |
+| Aster | `opencode-paid/deepseek-v4-flash` | thinking disabled; temperature `0.2` |
+| Birch | `opencode-paid/minimax-m3` | provider default; no documented M3 thinking control |
+| Cinder | `opencode-paid/kimi-k2.6` | thinking disabled; provider-fixed temperature |
+| Lumen | `opencode-paid/glm-5.2` | thinking disabled; temperature `0.2` |
+
+Use a fresh key in `OPENCODE_ZEN_API_KEY`. Never put the key in the command, an artifact, `.env`, or Git. If card-charge control matters, disable Zen auto-reload before the run; the local ceiling controls model-request usage, not account reloads. This command authorizes exactly one exploratory cycle with communication enabled:
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -148,19 +157,29 @@ try {
     --model opencode-paid/kimi-k2.6 `
     --model opencode-paid/glm-5.2 `
     --preset lean-camp-v1 `
-    --seed 17 --cycles 1 --max-calls 4 `
+    --seed 29995 --cycles 1 `
+    --max-calls 16 --require-complete-budget `
     --max-completion-tokens 1024 `
+    --temperature 0.2 `
     --reasoning-effort compatibility-first `
-    --max-paid-usd 0.05 `
+    --max-paid-usd 0.18 `
     --timeout-seconds 120 `
     --show-transcript `
-    --output artifacts\live-smoke-paid-direct-17.json
+    --output outputs\v0.6.0-paid-observation-29995.json
+  if ($LASTEXITCODE -ne 0) {
+    throw "paid observation failed; preserve the artifact and do not retry"
+  }
 } finally {
   Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
+  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 }
 ```
 
-Paid probes are limited to one call per model, so no paid survivor can continue beyond the first simultaneous chance. If a model does not rest, the host stops before an unpriced fifth request. A complete four-model cycle can require up to 16 calls; use the free or Go route while we finish that paid cost envelope. Do not rerun a failed paid call automatically.
+`--max-calls 16` covers the four survivors across all four chances. It is a hard request ceiling, not an expected count; survivors that rest early receive no later calls. Before each paid request, the host prices the exact current message payload plus the full 1,024-token output allowance. It refuses the request before transport if that bound plus accounted earlier cost would exceed `$0.18`. The gate assumes the pinned prices remain current, the 1,024-token input allowance covers the hidden chat template, and the provider honors the output cap. A timeout can still be billed; its artifact retains the authorized exposure.
+
+Run this episode once. Do not retry a failed provider call, repair a malformed response, or rerun because no one speaks, transfers resources, or chooses an interesting action. Preserve the artifact either way.
+
+This run can describe actions from one seed and one fixed name-to-model mapping. It cannot establish a model ranking, stable model traits, cooperation, or the effect of communication. Speech remains observable, but this episode has no silent control. See the [frozen paid-observation protocol](outputs/v0.6.0-paid-observation-protocol.md) before running it.
 
 The host accepts:
 
@@ -168,7 +187,7 @@ The host accepts:
 - `opencode-go/MODEL` for the Go endpoint
 - `opencode-paid/MODEL` for the pinned paid allowlist
 
-GLM receives its documented [JSON-object response mode](https://docs.z.ai/api-reference/llm/chat-completion) plus the full response schema in its prompt. In `compatibility-first`, the current paid models receive their supported direct-answer controls. The strict parser remains the final authority.
+GLM receives its documented [JSON-object response mode](https://docs.z.ai/api-reference/llm/chat-completion) plus the full response schema in its prompt. In `compatibility-first`, DeepSeek, Kimi, and GLM receive their documented direct-answer controls. MiniMax M3 uses provider defaults because its current public documentation does not define an M3 thinking control. The strict parser remains the final authority.
 
 ## repository map
 

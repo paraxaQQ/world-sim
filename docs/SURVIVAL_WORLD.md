@@ -1,4 +1,4 @@
-# named survival world v0.5.1
+# named survival world v0.6.0
 
 ## purpose
 
@@ -71,7 +71,7 @@ Energy at or below 0 is permanent death. Dead survivors receive no later view or
 
 One active choice may contain one message of 1-500 characters addressed to a living peer or `everyone`.
 
-Speech costs 0 energy in v0.5.1. This keeps conversational frequency separate from metabolism. Speech remains bounded and inert; evidence of cooperation still requires a later costly transfer or other objective action.
+Speech costs 0 energy in v0.6.0. This keeps conversational frequency separate from metabolism. Speech remains bounded and inert; evidence of cooperation still requires a later costly transfer or other objective action.
 
 A valid message becomes visible on the recipient's next active chance. An early sleeper therefore receives messages sent later in the cycle when it wakes next cycle. Same-chance messages cannot affect frozen same-chance choices.
 

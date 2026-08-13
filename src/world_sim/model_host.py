@@ -25,17 +25,18 @@ from .survival.protocol import MODEL_MAX_COMPLETION_TOKENS, parse_model_response
 
 
 ADAPTER_NAME = "opencode-direct-chat-completions"
-WORLD_SIM_VERSION = "0.5.1"
+WORLD_SIM_VERSION = "0.6.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
 DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
 LIVE_REASONING_EFFORTS = ("provider-default", "low", "compatibility-first")
 MAX_HTTP_RESPONSE_BYTES = 131_072
-PAID_ZEN_PRICE_SNAPSHOT = "2026-08-12"
+PAID_ZEN_PRICE_SNAPSHOT = "2026-08-13"
+PAID_ZEN_PRICE_SOURCE = "https://opencode.ai/docs/zen"
 PAID_ZEN_PRICE_SAFETY_FACTOR = Decimal("1.25")
 PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS = 1_024
-PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.05")
+PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.18")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 
 
@@ -119,6 +120,72 @@ class LiveCallCapFailure(RuntimeError):
         self.public_name = public_name
 
 
+class LivePaidBudgetFailure(RuntimeError):
+    def __init__(
+        self,
+        *,
+        view: SurvivorView,
+        public_name: str,
+        authorization: Mapping[str, str | int],
+    ) -> None:
+        super().__init__("paid cost authorization exhausted before request")
+        self.view = view
+        self.public_name = public_name
+        self.authorization = dict(authorization)
+
+
+@dataclass
+class _PaidBudget:
+    limit: Decimal
+    accounted: Decimal = Decimal("0")
+
+    def quote(
+        self,
+        assignment: _Assignment,
+        request: Mapping[str, object],
+    ) -> dict[str, str | int]:
+        bound = _paid_request_bound(assignment.model_id, request)
+        cumulative_bound = self.accounted + bound.cost_bound
+        receipt: dict[str, str | int] = {
+            **bound.to_dict(),
+            "prior_accounted_cost_usd": _decimal_text(self.accounted),
+            "cumulative_cost_bound_usd": _decimal_text(cumulative_bound),
+            "max_paid_usd": _decimal_text(self.limit),
+        }
+        return receipt
+
+    def account(
+        self,
+        authorization: dict[str, str | int],
+        *,
+        provider_cost: Decimal,
+        calculated_cost: Decimal,
+    ) -> bool:
+        actual = max(provider_cost, calculated_cost)
+        self.accounted += actual
+        authorization["accounted_cost_usd"] = _decimal_text(actual)
+        authorization["cumulative_accounted_cost_usd"] = _decimal_text(
+            self.accounted
+        )
+        return actual <= Decimal(str(authorization["request_cost_bound_usd"]))
+
+
+@dataclass(frozen=True)
+class _PaidRequestBound:
+    prompt_utf8_bytes: int
+    input_token_bound: int
+    max_completion_tokens: int
+    cost_bound: Decimal
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "prompt_utf8_bytes": self.prompt_utf8_bytes,
+            "input_token_bound": self.input_token_bound,
+            "max_completion_tokens": self.max_completion_tokens,
+            "request_cost_bound_usd": _decimal_text(self.cost_bound),
+        }
+
+
 class StdlibChatTransport:
     def post(
         self,
@@ -134,7 +201,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.5.1",
+            "User-Agent": f"world-sim/{WORLD_SIM_VERSION}",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -201,6 +268,7 @@ class _LiveProvider(SurvivalChoiceProvider):
     reasoning_effort: str | None
     max_calls: int
     calls: list[dict[str, Any]]
+    paid_budget: _PaidBudget | None
 
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
         if view.name != self.assignment.public_name:
@@ -217,6 +285,17 @@ class _LiveProvider(SurvivalChoiceProvider):
             temperature=self.temperature,
             reasoning_effort=self.reasoning_effort,
         )
+        cost_authorization: dict[str, str | int] | None = None
+        if self.paid_budget is not None:
+            cost_authorization = self.paid_budget.quote(self.assignment, request)
+            if Decimal(cost_authorization["cumulative_cost_bound_usd"]) > Decimal(
+                cost_authorization["max_paid_usd"]
+            ):
+                raise LivePaidBudgetFailure(
+                    view=view,
+                    public_name=self.assignment.public_name,
+                    authorization=cost_authorization,
+                )
         try:
             response = self.transport.post(
                 self.assignment.endpoint,
@@ -225,7 +304,14 @@ class _LiveProvider(SurvivalChoiceProvider):
                 timeout_seconds=self.timeout_seconds,
             )
         except TransportFailure as error:
-            self._fail(view, request, error.kind, str(error), None)
+            self._fail(
+                view,
+                request,
+                error.kind,
+                str(error),
+                None,
+                cost_authorization,
+            )
         except Exception as error:  # noqa: BLE001 - retain a paid-call receipt.
             self._fail(
                 view,
@@ -233,6 +319,7 @@ class _LiveProvider(SurvivalChoiceProvider):
                 "transport_error",
                 f"transport raised {type(error).__name__}",
                 None,
+                cost_authorization,
             )
 
         if response.status != 200:
@@ -242,11 +329,19 @@ class _LiveProvider(SurvivalChoiceProvider):
                 "http_error",
                 f"provider returned HTTP {response.status}",
                 response,
+                cost_authorization,
             )
         try:
             content, metadata = _parse_envelope(response.body)
         except EnvelopeFailure as error:
-            self._fail(view, request, error.kind, str(error), response)
+            self._fail(
+                view,
+                request,
+                error.kind,
+                str(error),
+                response,
+                cost_authorization,
+            )
         if self.assignment.endpoint.provider == "opencode-paid":
             if metadata["provider_reported_cost_usd"] is None:
                 self._fail(
@@ -255,13 +350,37 @@ class _LiveProvider(SurvivalChoiceProvider):
                     "provider_cost_error",
                     "paid response did not report its cost",
                     response,
+                    cost_authorization,
                 )
             try:
                 metadata["uncached_calculated_cost_usd"] = _calculate_usage_cost(
                     self.assignment.model_id, metadata["usage"]
                 )
             except EnvelopeFailure as error:
-                self._fail(view, request, error.kind, str(error), response)
+                self._fail(
+                    view,
+                    request,
+                    error.kind,
+                    str(error),
+                    response,
+                    cost_authorization,
+                )
+            assert self.paid_budget is not None
+            assert cost_authorization is not None
+            within_bound = self.paid_budget.account(
+                cost_authorization,
+                provider_cost=Decimal(metadata["provider_reported_cost_usd"]),
+                calculated_cost=Decimal(metadata["uncached_calculated_cost_usd"]),
+            )
+            if not within_bound:
+                self._fail(
+                    view,
+                    request,
+                    "paid_cost_bound_breached",
+                    "provider cost exceeded the authorized request bound",
+                    response,
+                    cost_authorization,
+                )
 
         parsed = parse_model_response(
             content,
@@ -271,7 +390,7 @@ class _LiveProvider(SurvivalChoiceProvider):
             max_speech_chars=int(view.rules["max_speech_chars"]),
         )
         record = {
-            **self._base_record(view, request),
+            **self._base_record(view, request, cost_authorization),
             "status": "succeeded",
             "response": {
                 "http_status": response.status,
@@ -295,6 +414,7 @@ class _LiveProvider(SurvivalChoiceProvider):
         kind: str,
         message: str,
         response: TransportResponse | None,
+        cost_authorization: Mapping[str, str | int] | None = None,
     ) -> NoReturn:
         response_receipt = _error_receipt(response) if response is not None else None
         if (
@@ -306,7 +426,7 @@ class _LiveProvider(SurvivalChoiceProvider):
                 _paid_error_cost_receipt(response, self.assignment.model_id)
             )
         record = {
-            **self._base_record(view, request),
+            **self._base_record(view, request, cost_authorization),
             "status": "failed",
             "response": response_receipt,
             "error": {
@@ -319,9 +439,12 @@ class _LiveProvider(SurvivalChoiceProvider):
         raise LiveCallFailure(message)
 
     def _base_record(
-        self, view: SurvivorView, request: Mapping[str, object]
+        self,
+        view: SurvivorView,
+        request: Mapping[str, object],
+        cost_authorization: Mapping[str, str | int] | None,
     ) -> dict[str, object]:
-        return {
+        record: dict[str, object] = {
             "sequence": len(self.calls) + 1,
             "day": view.day,
             "cycle": view.day,
@@ -332,6 +455,9 @@ class _LiveProvider(SurvivalChoiceProvider):
             "endpoint": self.assignment.endpoint.url,
             "request": dict(request),
         }
+        if cost_authorization is not None:
+            record["cost_authorization"] = dict(cost_authorization)
+        return record
 
     def _record(self, record: dict[str, Any]) -> None:
         self.calls.append(record)
@@ -397,6 +523,7 @@ def run_live_survival(
             None if reasoning_effort == "provider-default" else reasoning_effort
         ),
         max_paid_usd=max_paid_usd,
+        require_complete_budget=require_complete_budget,
     )
     active_environ = os.environ if environ is None else environ
     zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
@@ -411,6 +538,7 @@ def run_live_survival(
         else None
     )
     calls: list[dict[str, Any]] = []
+    paid_budget = _PaidBudget(paid_limit) if paid_limit is not None else None
     active_transport = transport or StdlibChatTransport()
     providers = {
         assignment.public_name: _LiveProvider(
@@ -427,6 +555,11 @@ def run_live_survival(
             ),
             max_calls=max_calls,
             calls=calls,
+            paid_budget=(
+                paid_budget
+                if assignment.endpoint.provider == "opencode-paid"
+                else None
+            ),
         )
         for assignment in assignments
     }
@@ -436,7 +569,7 @@ def run_live_survival(
         config=world_config,
     )
     base = {
-        "format_version": 2,
+        "format_version": 3,
         "mode": "live_named_survival",
         "adapter": ADAPTER_NAME,
         "source": {
@@ -502,6 +635,28 @@ def run_live_survival(
     try:
         result = run_survival(world, providers, days=days)
     except RuntimeError as error:
+        if isinstance(error.__cause__, LivePaidBudgetFailure):
+            failure = error.__cause__
+            return {
+                **base,
+                "status": "failed",
+                "failure": {
+                    "call_sequence": None,
+                    "day": failure.view.day,
+                    "cycle": failure.view.day,
+                    "slot": failure.view.slot,
+                    "seat_id": world.survivors[failure.public_name].seat_id,
+                    "public_name": failure.public_name,
+                    "model": providers[failure.public_name].assignment.model_ref,
+                    "kind": "paid_budget_exhausted",
+                    "message": str(failure),
+                    "http_status": None,
+                    "cost_authorization": failure.authorization,
+                },
+                "initial_state": initial_state,
+                "partial_state": world.to_dict(),
+                "provider_summary": _provider_summary(calls),
+            }
         if isinstance(error.__cause__, LiveCallCapFailure):
             failure = error.__cause__
             return {
@@ -602,9 +757,7 @@ def _build_request(
                 "max_completion_tokens": max_completion_tokens,
                 "stream": False,
             }
-            if reasoning_effort == "compatibility-first":
-                request["thinking"] = {"type": "disabled"}
-            else:
+            if reasoning_effort != "compatibility-first":
                 request["temperature"] = temperature
             return request
         if assignment.model_id == "kimi-k2.6":
@@ -646,6 +799,48 @@ def _build_request(
     return request
 
 
+def _paid_request_bound(
+    model_id: str,
+    request: Mapping[str, object],
+) -> _PaidRequestBound:
+    try:
+        provider = PAID_ZEN_PRICES[model_id]
+    except KeyError as error:
+        raise ValueError(
+            f"paid model {model_id!r} is not in the pinned price allowlist"
+        ) from error
+    messages = request.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError("paid request has no messages list")
+    prompt_bytes = len(
+        json.dumps(
+            messages,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    completion_cap = request.get(
+        "max_completion_tokens", request.get("max_tokens")
+    )
+    if type(completion_cap) is not int or completion_cap < 1:
+        raise ValueError("paid request has no valid completion-token cap")
+    input_token_bound = prompt_bytes + PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS
+    call_bound = (
+        (
+            Decimal(input_token_bound) * provider.input_per_million_usd
+            + Decimal(completion_cap) * provider.output_per_million_usd
+        )
+        / USD_PER_MILLION_TOKENS
+        * PAID_ZEN_PRICE_SAFETY_FACTOR
+    )
+    return _PaidRequestBound(
+        prompt_utf8_bytes=prompt_bytes,
+        input_token_bound=input_token_bound,
+        max_completion_tokens=completion_cap,
+        cost_bound=call_bound,
+    )
+
+
 def _paid_preflight(
     *,
     assignments: Sequence[_Assignment],
@@ -658,6 +853,7 @@ def _paid_preflight(
     temperature: float,
     reasoning_effort: str | None,
     max_paid_usd: Decimal | str | None,
+    require_complete_budget: bool,
 ) -> tuple[Decimal | None, dict[str, object] | None]:
     if not assignments:
         if max_paid_usd is not None:
@@ -666,18 +862,23 @@ def _paid_preflight(
     limit = _parse_positive_decimal(max_paid_usd, name="max_paid_usd")
     if limit > PAID_ZEN_MAX_AUTHORIZATION_USD:
         raise ValueError(
-            "paid Zen smoke authorization cannot exceed "
+            "paid Zen authorization cannot exceed "
             f"{_decimal_text(PAID_ZEN_MAX_AUTHORIZATION_USD)} USD"
         )
     if len(assignments) != len(all_assignments):
         raise ValueError("paid and non-paid models cannot be mixed in one run")
     if days != 1:
         raise ValueError("paid Zen smoke runs require exactly one cycle")
-    if max_calls != len(assignments):
-        raise ValueError(
-            "paid Zen smoke runs require --max-calls equal to the population"
-        )
     world_max_calls = len(assignments) * days * world_config.slots_per_cycle
+    if max_calls not in {len(assignments), world_max_calls}:
+        raise ValueError(
+            "paid Zen runs require --max-calls equal to the population or the "
+            "complete-cycle maximum"
+        )
+    if max_calls == world_max_calls and not require_complete_budget:
+        raise ValueError(
+            "paid complete-cycle runs require --require-complete-budget"
+        )
     names = tuple(assignment.public_name for assignment in all_assignments)
     world = make_survival_world(
         names,
@@ -691,7 +892,6 @@ def _paid_preflight(
             raise ValueError(
                 f"paid model {assignment.model_id!r} is not in the pinned price allowlist"
             )
-        provider = PAID_ZEN_PRICES[assignment.model_id]
         view = survival_view_for(world, assignment.public_name)
         request = _build_request(
             assignment,
@@ -700,33 +900,20 @@ def _paid_preflight(
             temperature=temperature,
             reasoning_effort=reasoning_effort,
         )
-        prompt_bytes = len(
-            json.dumps(
-                request["messages"],
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        )
-        input_token_bound = prompt_bytes + PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS
-        call_bound = (
-            Decimal(input_token_bound) * provider.input_per_million_usd
-            + Decimal(max_completion_tokens) * provider.output_per_million_usd
-        ) / USD_PER_MILLION_TOKENS * PAID_ZEN_PRICE_SAFETY_FACTOR
-        model_total = call_bound
+        provider = PAID_ZEN_PRICES[assignment.model_id]
+        bound = _paid_request_bound(assignment.model_id, request)
+        model_total = bound.cost_bound
         total += model_total
         rows.append(
             {
                 "model": assignment.model_ref,
-                "prompt_utf8_bytes": prompt_bytes,
-                "input_token_bound": input_token_bound,
-                "max_completion_tokens": max_completion_tokens,
+                **bound.to_dict(),
                 "input_per_million_usd": _decimal_text(
                     provider.input_per_million_usd
                 ),
                 "output_per_million_usd": _decimal_text(
                     provider.output_per_million_usd
                 ),
-                "cost_bound_usd": _decimal_text(call_bound),
                 "potential_calls": 1,
                 "model_cost_bound_usd": _decimal_text(model_total),
             }
@@ -738,12 +925,15 @@ def _paid_preflight(
         )
     return limit, {
         "price_snapshot": PAID_ZEN_PRICE_SNAPSHOT,
+        "price_source": PAID_ZEN_PRICE_SOURCE,
         "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
         "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+        "runtime_gate": "exact_request_before_every_paid_transport",
+        "cost_bound_scope": "first_simultaneous_chance_only",
         "calls": rows,
         "authorized_calls": max_calls,
         "world_max_calls": world_max_calls,
-        "total_cost_bound_usd": _decimal_text(total),
+        "first_chance_cost_bound_usd": _decimal_text(total),
     }
 
 

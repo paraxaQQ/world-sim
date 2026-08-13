@@ -113,6 +113,29 @@ class BrokenTransport(ChatTransport):
         raise LookupError("secret diagnostic")
 
 
+class TimeoutTransport(ChatTransport):
+    def __init__(self) -> None:
+        self.requests: list[dict[str, object]] = []
+
+    def post(
+        self,
+        endpoint: EndpointSpec,
+        request_body: Mapping[str, object],
+        *,
+        api_key: str | None,
+        timeout_seconds: float,
+    ) -> TransportResponse:
+        self.requests.append(
+            {
+                "endpoint": endpoint,
+                "body": deepcopy(dict(request_body)),
+                "api_key": api_key,
+                "timeout_seconds": timeout_seconds,
+            }
+        )
+        raise TimeoutError("provider response deadline elapsed")
+
+
 def result_from(artifact: Mapping[str, object]) -> SurvivalResult:
     payload = artifact["result"]
     if not isinstance(payload, Mapping):
@@ -326,7 +349,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.5.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.6.0")
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -477,11 +500,11 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["format_version"], 2)
+        self.assertEqual(artifact["format_version"], 3)
         self.assertEqual(len(transport.requests), 4)
         self.assertEqual(artifact["config"]["max_paid_usd"], "0.05")
         self.assertLessEqual(
-            Decimal(artifact["paid_preflight"]["total_cost_bound_usd"]),
+            Decimal(artifact["paid_preflight"]["first_chance_cost_bound_usd"]),
             Decimal("0.05"),
         )
         self.assertEqual(
@@ -543,6 +566,258 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(glm["reasoning_effort"], "low")
         self.assertNotIn(secret, json.dumps(artifact))
 
+    def test_paid_complete_cycle_authorizes_each_request_and_replays(self) -> None:
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"forage"},"say":null}',
+                    request_id=f"paid-cycle-{index}",
+                    cost="0.001",
+                )
+                for index in range(1, 17)
+            ]
+        )
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=17,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.18",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.6.0")
+        self.assertEqual(len(transport.requests), 16)
+        self.assertEqual(len(artifact["calls"]), 16)
+        self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
+        self.assertEqual(artifact["paid_preflight"]["world_max_calls"], 16)
+        self.assertEqual(
+            artifact["paid_preflight"]["cost_bound_scope"],
+            "first_simultaneous_chance_only",
+        )
+        self.assertEqual(
+            artifact["paid_preflight"]["price_source"],
+            "https://opencode.ai/docs/zen",
+        )
+        for index, call in enumerate(artifact["calls"], start=1):
+            authorization = call["cost_authorization"]
+            prior = Decimal(authorization["prior_accounted_cost_usd"])
+            request_bound = Decimal(authorization["request_cost_bound_usd"])
+            cumulative_bound = Decimal(
+                authorization["cumulative_cost_bound_usd"]
+            )
+            self.assertEqual(prior, Decimal(index - 1) * Decimal("0.001"))
+            self.assertGreater(request_bound, 0)
+            self.assertEqual(cumulative_bound, prior + request_bound)
+            self.assertLessEqual(cumulative_bound, Decimal("0.18"))
+            self.assertEqual(authorization["max_paid_usd"], "0.18")
+            self.assertEqual(authorization["accounted_cost_usd"], "0.001")
+            self.assertEqual(
+                Decimal(authorization["cumulative_accounted_cost_usd"]),
+                Decimal(index) * Decimal("0.001"),
+            )
+        original = result_from(artifact)
+        self.assertEqual(replay_survival(original).to_dict(), original.to_dict())
+
+    def test_paid_complete_cycle_shape_is_explicit_before_transport(self) -> None:
+        cases = (
+            (
+                15,
+                True,
+                "complete-cycle budget requires at least 16 model calls",
+            ),
+            (16, False, "require-complete-budget"),
+        )
+        for max_calls, require_complete_budget, message in cases:
+            with self.subTest(max_calls=max_calls):
+                transport = FakeTransport([])
+                with self.assertRaisesRegex(ValueError, message):
+                    run_live_survival(
+                        model_refs=PAID_MODELS,
+                        days=1,
+                        max_calls=max_calls,
+                        require_complete_budget=require_complete_budget,
+                        max_completion_tokens=1_024,
+                        reasoning_effort="compatibility-first",
+                        max_paid_usd="0.18",
+                        transport=transport,
+                        environ={},
+                    )
+                self.assertEqual(transport.requests, [])
+
+    def test_paid_cumulative_guard_blocks_the_next_request(self) -> None:
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"forage"},"say":null}',
+                    cost=cost,
+                )
+                for cost in (
+                    "0.001",
+                    "0.003",
+                    "0.012",
+                    "0.016",
+                    "0.001",
+                    "0.003",
+                )
+            ]
+        )
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.04",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "paid_budget_exhausted")
+        self.assertIsNone(artifact["failure"]["call_sequence"])
+        self.assertEqual(len(transport.requests), 6)
+        self.assertEqual(len(artifact["calls"]), 6)
+        authorization = artifact["failure"]["cost_authorization"]
+        self.assertEqual(authorization["prior_accounted_cost_usd"], "0.036")
+        self.assertGreater(
+            Decimal(authorization["cumulative_cost_bound_usd"]),
+            Decimal(authorization["max_paid_usd"]),
+        )
+
+    def test_paid_later_message_heavy_requests_receive_larger_bounds(self) -> None:
+        long_message = "x" * 500
+        choice = json.dumps(
+            {
+                "action": {"kind": "forage"},
+                "say": {"to": "everyone", "text": long_message},
+            },
+            separators=(",", ":"),
+        )
+        transport = FakeTransport(
+            [response(choice, cost="0.001") for _ in range(16)]
+        )
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.18",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        aster_calls = [
+            call for call in artifact["calls"] if call["public_name"] == "Aster"
+        ]
+        self.assertEqual([call["slot"] for call in aster_calls], [1, 2, 3, 4])
+        first = aster_calls[0]["cost_authorization"]
+        second = aster_calls[1]["cost_authorization"]
+        self.assertGreater(second["prompt_utf8_bytes"], first["prompt_utf8_bytes"])
+        self.assertGreater(
+            Decimal(second["request_cost_bound_usd"]),
+            Decimal(first["request_cost_bound_usd"]),
+        )
+        for call in aster_calls:
+            expected_prompt_bytes = len(
+                json.dumps(
+                    call["request"]["messages"],
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            )
+            self.assertEqual(
+                call["cost_authorization"]["prompt_utf8_bytes"],
+                expected_prompt_bytes,
+            )
+
+    def test_paid_provider_cost_over_request_bound_fails_before_choice_mutation(
+        self,
+    ) -> None:
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"forage"},"say":null}',
+                    cost="0.01",
+                )
+            ]
+        )
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.18",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "paid_cost_bound_breached")
+        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(len(artifact["calls"]), 1)
+        call = artifact["calls"][0]
+        self.assertEqual(call["status"], "failed")
+        self.assertEqual(call["response"]["provider_reported_cost_usd"], "0.01")
+        self.assertGreater(
+            Decimal(call["cost_authorization"]["accounted_cost_usd"]),
+            Decimal(call["cost_authorization"]["request_cost_bound_usd"]),
+        )
+        self.assertEqual(artifact["partial_state"]["day"], 0)
+        self.assertFalse(
+            any(
+                event["kind"] == "choice_submitted"
+                for event in artifact["partial_state"]["events"]
+            )
+        )
+
+    def test_paid_timeout_retains_the_authorized_exposure(self) -> None:
+        transport = TimeoutTransport()
+
+        artifact = run_live_survival(
+            model_refs=PAID_MODELS,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.18",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "transport_error")
+        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(len(artifact["calls"]), 1)
+        call = artifact["calls"][0]
+        self.assertIsNone(call["response"])
+        authorization = call["cost_authorization"]
+        self.assertEqual(authorization["prior_accounted_cost_usd"], "0")
+        self.assertEqual(
+            authorization["cumulative_cost_bound_usd"],
+            authorization["request_cost_bound_usd"],
+        )
+        self.assertLessEqual(
+            Decimal(authorization["cumulative_cost_bound_usd"]),
+            Decimal(authorization["max_paid_usd"]),
+        )
+
     def test_paid_compatibility_profile_uses_model_native_controls(self) -> None:
         models = (
             "deepseek-v4-flash",
@@ -581,9 +856,8 @@ class ModelHostTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", deepseek)
         self.assertEqual(
             set(minimax),
-            {"model", "messages", "max_completion_tokens", "thinking", "stream"},
+            {"model", "messages", "max_completion_tokens", "stream"},
         )
-        self.assertEqual(minimax["thinking"], {"type": "disabled"})
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertNotIn("temperature", kimi)
         self.assertEqual(glm["thinking"], {"type": "disabled"})
@@ -684,7 +958,7 @@ class ModelHostTests(unittest.TestCase):
             ({}, "max_paid_usd is required"),
             ({"max_paid_usd": "0"}, "positive finite decimal"),
             ({"max_paid_usd": "NaN"}, "positive finite decimal"),
-            ({"max_paid_usd": "0.051"}, "cannot exceed 0.05 USD"),
+            ({"max_paid_usd": "0.181"}, "cannot exceed 0.18 USD"),
             (
                 {"max_paid_usd": "0.05", "model_refs": ("opencode-paid/unknown",) * 4},
                 "not in the pinned price allowlist",
@@ -695,7 +969,7 @@ class ModelHostTests(unittest.TestCase):
             ),
             (
                 {"max_paid_usd": "0.05", "max_calls": 16},
-                "max-calls equal to the population",
+                "require-complete-budget",
             ),
             (
                 {"max_paid_usd": "0.000001"},
