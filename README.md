@@ -53,7 +53,7 @@ The event log records submitted JSON choices, validation failures, energy costs,
 
 Chat alone is not evidence of cooperation. A message plus a later costly, state-backed action can be.
 
-The bundled population is a deterministic scripted fixture. It proves the world runs and replays; it says nothing about model behavior. A model adapter comes after the mechanics and prompts are stable.
+The bundled scripted population proves the world runs and replays; it says nothing about model behavior. The live adapter now lets the same engine collect choices from real models without giving them tools or host access.
 
 ## run it
 
@@ -70,6 +70,23 @@ py -3.11 -m world_sim survive `
 
 The command prints objective metrics and a canonical SHA-256 for the complete result. The artifact includes the choice tape, view hashes, objective events, and final state. Running the same configuration again produces the same artifact bytes and hash.
 
+Run the smallest live smoke test with two models from OpenCode's free pool:
+
+```powershell
+$env:PYTHONPATH = "src"
+py -3.11 -m world_sim survive-live `
+  --model opencode/mimo-v2.5-free `
+  --model opencode/deepseek-v4-flash-free `
+  --seed 17 --days 3 --max-calls 6 `
+  --max-completion-tokens 4096 `
+  --show-transcript `
+  --output artifacts\live-smoke-17.json
+```
+
+Each repeated `--model` value fills the next hidden seat: Aster, then Birch, then Cinder, up to eight survivors. A three-day, two-model run can make at most six calls, so the command rejects a lower `--max-calls` value before it contacts a provider. The output file is required because a failed provider call can happen after earlier calls have already completed.
+
+The `opencode` route accepts only `-free` models and sends no credential. To use the paid OpenCode Go route, pass a model such as `opencode-go/mimo-v2.5`. The adapter reads `OPENCODE_API_KEY` first, then the existing OpenCode `auth.json`. It never puts the key or authorization header in the artifact.
+
 ## model boundary
 
 The model-facing protocol is already closed:
@@ -83,7 +100,11 @@ The model-facing protocol is already closed:
 
 The root keys must be exactly `action` and `say`. `say` may be `null`. Invalid action and speech components are handled independently: a malformed action becomes a paid `rest`, while malformed speech becomes silence. Neither failure earns a free retry.
 
-The model-response parser rejects duplicate JSON keys and raw responses larger than 8 KiB. The future adapter must request at most 512 output tokens. The world independently enforces the 500-character speech limit. No API adapter or real key is connected yet.
+The model-response parser rejects duplicate JSON keys and final replies larger than 8 KiB. The adapter allows at most 4,096 completion tokens because that provider budget includes hidden reasoning before the short answer. It does not send a provider-specific reasoning control. Models use their provider default, and the artifact records provider-reported reasoning tokens when available. The world independently enforces the 500-character speech limit.
+
+One live decision is one direct HTTPS request. The adapter sends no tools, makes no repair call, and does not fall back to another model. An HTTP, timeout, or provider-envelope failure stops the run and leaves a failure artifact. Invalid choice JSON is model behavior: the action becomes a paid `rest`, invalid speech becomes silence, and the run continues.
+
+Use the top-level `calls` records and `provider_summary` to analyze model-format failures. The nested deterministic `result` records only the normalized choices that entered world physics, so replay does not require the provider or its raw reply.
 
 ## repository map
 
@@ -94,14 +115,17 @@ src/world_sim/survival/
   engine.py    deterministic simultaneous turn resolution
   prompt.py    human-phrased model prompt and response schema
   demo.py      scripted reference population, metrics, and replay hash
+src/world_sim/model_host.py
+               direct model transport, credential boundary, and live artifacts
 tests/
   test_survival.py
+  test_model_host.py
 ```
 
 The older Blind Commons selection experiment remains in the top-level `world_sim` modules as a calibration instrument. Its `pilot`, `compare`, `evolve`, and `matrix` commands still work, but it is no longer the project's headline. See [the survival-world specification](docs/SURVIVAL_WORLD.md), [the lineage calibration](docs/LINEAGE_SELECTION.md), and [the original Blind Commons rules](docs/EXPERIMENT_V0.md).
 
 ## containment
 
-The world engine has no browser, shell, filesystem, network, payment rail, or process handle. A future adapter will send a whitelisted view to a model and accept only the validated JSON choice. Provider names, model IDs, API keys, hidden seat IDs, and host metadata do not enter the survivor's view.
+The world engine still has no browser, shell, filesystem, network, payment rail, or process handle. The separate host adapter can make one HTTPS model request for each living seat and day. It accepts only the two trusted OpenCode endpoints, sends only the recorded system and turn prompts, and passes the strict parsed choice into the engine. Provider names, model IDs, API keys, hidden seat IDs, and host metadata do not enter the survivor's prompt.
 
-The next useful work is a capability-free model adapter, scripted balance sweeps, and preregistered same-model and mixed-model controls. New interaction mechanics come one at a time only after the base ecology remains nontrivial across seeds.
+The next useful work is several tiny smoke runs, then preregistered same-model and mixed-model controls. New interaction mechanics come one at a time only after the base ecology remains nontrivial across seeds.

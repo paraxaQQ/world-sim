@@ -1,5 +1,14 @@
 # changelog
 
+## 0.4.0 - 2026-08-12
+
+- add a direct, capability-free adapter for OpenCode's free and Go chat-completions endpoints.
+- add `survive-live` for 2-8 hidden-seat model assignments with hard call, completion-token, response-size, and timeout limits.
+- allow up to 4,096 total completion tokens so reasoning models can deliberate, and record provider-reported reasoning-token usage without forcing a provider-specific effort setting.
+- retain the exact prompts, raw provider replies, parsed choices, validation failures, model assignments, and provider-reported token usage in each live artifact.
+- abort on transport or provider failures, keep malformed model JSON under the existing paid-rest and silence rules, and never retry a model call.
+- keep the deterministic world engine unchanged and replay live results without another model call.
+
 ## 0.3.1 - 2026-08-12
 
 - raise the per-message world limit from 160 to 500 characters.

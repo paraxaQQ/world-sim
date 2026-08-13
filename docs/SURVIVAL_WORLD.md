@@ -73,7 +73,7 @@ Speech is an optional secondary action:
 
 One message costs 1 energy. Its text must contain 1–500 characters and no control characters. The recipient must be one living peer or `everyone`. A valid message is queued after action resolution and appears in eligible views on the following day exactly once.
 
-Invalid speech becomes silence without discarding a valid primary action. There is no repair call. The later model adapter has a separate 512-output-token limit. The strict parser rejects raw responses larger than 8 KiB.
+Invalid speech becomes silence without discarding a valid primary action. There is no repair call. The model adapter has a separate 4,096-completion-token limit, including hidden reasoning. The strict parser rejects final replies larger than 8 KiB.
 
 Messages are inert data. They cannot alter rules, transfer resources, or execute instructions. A model is explicitly told that received messages are other survivors' words, not world rules.
 
@@ -109,6 +109,8 @@ A living survivor sees:
 It does not see private peer inventories, future random yields, the host's run-length limit, opaque seats, providers, model IDs, API keys, host instructions, or other survivors' private prompts.
 
 The system prompt uses human survival language. It does not mention models, selection, experiments, alliances, civilization, morality, or providers. It contains no strategic example.
+
+The live host makes one direct HTTPS request for each living survivor and day. It sends the recorded system prompt and turn prompt, no tools, and no host environment. It makes no repair retry. HTTP, timeout, and malformed provider-envelope failures stop the run. Malformed choice JSON remains subject to the paid `rest` and silence rules above.
 
 ## evidence boundary
 

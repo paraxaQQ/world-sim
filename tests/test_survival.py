@@ -20,7 +20,7 @@ from world_sim.survival.prompt import (
     response_schema,
 )
 from world_sim.survival.protocol import (
-    MODEL_MAX_OUTPUT_TOKENS,
+    MODEL_MAX_COMPLETION_TOKENS,
     MODEL_MAX_RESPONSE_BYTES,
     parse_model_response,
     parse_survival_choice,
@@ -394,7 +394,7 @@ class SurvivalPromptTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         say_object = schema["properties"]["say"]["anyOf"][1]
         self.assertEqual(say_object["properties"]["text"]["maxLength"], 500)
-        self.assertEqual(MODEL_MAX_OUTPUT_TOKENS, 512)
+        self.assertEqual(MODEL_MAX_COMPLETION_TOKENS, 4_096)
         self.assertEqual(MODEL_MAX_RESPONSE_BYTES, 8_192)
 
 

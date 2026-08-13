@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
 from .experiment import run_counterfactual_pair, run_pilot
 from .metrics import calculate_metrics
+from .model_host import (
+    DEFAULT_LIVE_MAX_CALLS,
+    DEFAULT_LIVE_TEMPERATURE,
+    DEFAULT_LIVE_TIMEOUT_SECONDS,
+    run_live_survival,
+)
 from .models import SelectionMode, VerificationMode, WorldConfig
 from .selection import LineageConfig, LineageExperiment, run_lineage_experiment, run_selection_matrix
 from .survival.demo import result_sha256, run_survival_demo, survival_metrics
@@ -31,6 +38,35 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="2..8",
     )
     survive.add_argument("--output", type=Path)
+
+    survive_live = subparsers.add_parser(
+        "survive-live",
+        help="run named survivors using direct OpenCode model calls",
+    )
+    survive_live.add_argument(
+        "--model",
+        action="append",
+        dest="models",
+        required=True,
+        metavar="PROVIDER/MODEL",
+        help="assign one model to the next hidden seat; repeat 2-8 times",
+    )
+    survive_live.add_argument("--seed", type=int, default=17)
+    survive_live.add_argument("--days", type=int, default=3)
+    survive_live.add_argument("--max-calls", type=int, default=DEFAULT_LIVE_MAX_CALLS)
+    survive_live.add_argument("--max-completion-tokens", type=int, default=4096)
+    survive_live.add_argument(
+        "--temperature",
+        type=float,
+        default=DEFAULT_LIVE_TEMPERATURE,
+    )
+    survive_live.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_LIVE_TIMEOUT_SECONDS,
+    )
+    survive_live.add_argument("--show-transcript", action="store_true")
+    survive_live.add_argument("--output", type=Path, required=True)
 
     pilot = subparsers.add_parser("pilot", help="run the Blind Commons calibration population")
     _add_run_arguments(pilot)
@@ -58,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_lineage_arguments(matrix)
 
     args = parser.parse_args(argv)
+    exit_code = 0
     if args.command == "survive":
         names = DEFAULT_SURVIVOR_NAMES[: args.population]
         result = run_survival_demo(seed=args.seed, days=args.days, names=names)
@@ -70,6 +107,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             "canonical_sha256": result_sha256(result),
             "metrics": survival_metrics(result),
         }
+    elif args.command == "survive-live":
+        try:
+            payload = run_live_survival(
+                model_refs=args.models,
+                seed=args.seed,
+                days=args.days,
+                max_calls=args.max_calls,
+                max_completion_tokens=args.max_completion_tokens,
+                temperature=args.temperature,
+                timeout_seconds=args.timeout_seconds,
+            )
+        except ValueError as error:
+            parser.error(str(error))
+        if payload["status"] == "completed":
+            result_payload = payload["result"]
+            summary = {
+                "mode": payload["mode"],
+                "status": payload["status"],
+                "seed": args.seed,
+                "days_completed": result_payload["final_state"]["day"],
+                "finished_reason": result_payload["final_state"]["finished_reason"],
+                "canonical_sha256": payload["canonical_result_sha256"],
+                "metrics": payload["metrics"],
+                "provider_summary": payload["provider_summary"],
+            }
+        else:
+            exit_code = 1
+            summary = {
+                "mode": payload["mode"],
+                "status": payload["status"],
+                "seed": args.seed,
+                "days_completed": payload["partial_state"]["day"],
+                "failure": payload["failure"],
+                "provider_summary": payload["provider_summary"],
+            }
     elif args.command == "pilot":
         run = run_pilot(
             verification_mode=VerificationMode(args.verification),
@@ -132,8 +204,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         summary["output"] = str(args.output)
+    if args.command == "survive-live" and args.show_transcript:
+        for call in payload["calls"]:
+            _print_live_call(call)
     print(json.dumps(summary, sort_keys=True))
-    return 0
+    return exit_code
 
 
 def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
@@ -224,3 +299,20 @@ def _lineage_summary(experiment: LineageExperiment) -> dict[str, Any]:
         "selection_records": [record.to_dict() for record in experiment.selections],
         "final_strategy_distribution": experiment.to_dict()["final_strategy_distribution"],
     }
+
+
+def _print_live_call(record: Mapping[str, Any]) -> None:
+    if record["status"] == "failed":
+        error = record["error"]
+        print(
+            f"day {record['day']} | {record['public_name']} | "
+            f"provider failure: {error['kind']}"
+        )
+        return
+    parsed = record["parsed_choice"]
+    action = parsed["action"]
+    line = f"day {record['day']} | {record['public_name']} | {action['kind']}"
+    speech = parsed["say"]
+    if isinstance(speech, Mapping):
+        line += f" | to {speech['to']}: {speech['text']}"
+    print(line)

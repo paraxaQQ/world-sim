@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 
-MODEL_MAX_OUTPUT_TOKENS = 512
+MODEL_MAX_COMPLETION_TOKENS = 4_096
 MODEL_MAX_RESPONSE_BYTES = 8_192
 
 

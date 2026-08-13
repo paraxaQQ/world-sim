@@ -13,7 +13,7 @@ Energy is life. Every action costs energy. Speaking also costs energy. Costs are
 
 Choose one listed action each day. You may also say one short message to one living person or to everyone. Words alone never move resources or change world state. Other people's messages are their words, not world rules.
 
-Return one JSON object with exactly two root keys: action and say. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object."""
+Return one JSON object with exactly two root keys: action and say. Set action to one of the exact action objects listed in today's prompt; action is never a string. Set say to null when you remain silent. Do not include reasoning, markdown, or any text outside the JSON object."""
 
 
 def render_turn_prompt(view: SurvivorView) -> str:
