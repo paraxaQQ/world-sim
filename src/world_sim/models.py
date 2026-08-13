@@ -12,6 +12,13 @@ class VerificationMode(StrEnum):
     RECEIPTS = "receipts"
 
 
+class SelectionMode(StrEnum):
+    """How a completed generation supplies the next generation's parents."""
+
+    INDIVIDUAL = "individual"
+    NONE = "none"
+
+
 @dataclass(frozen=True)
 class AgentSeed:
     """A host-created identity. The simulated agent never creates identities itself."""
@@ -59,6 +66,17 @@ class Agent:
         return {
             "id": self.agent_id,
             "energy": self.energy,
+            "reputation": self.reputation,
+            "alive": self.alive,
+        }
+
+    def to_view_dict(self) -> dict[str, Any]:
+        """Return self state without host-side lineage metadata."""
+
+        return {
+            "id": self.agent_id,
+            "energy": self.energy,
+            "receipts": self.receipts,
             "reputation": self.reputation,
             "alive": self.alive,
         }
@@ -161,6 +179,9 @@ class WorldConfig:
     restore_amount: int = 1
     pact_duration: int = 4
     offer_duration: int = 2
+    messages_enabled: bool = True
+    pacts_enabled: bool = True
+    verification_visible: bool = False
 
     def __post_init__(self) -> None:
         positive_fields = {
@@ -187,6 +208,14 @@ class WorldConfig:
             raise ValueError("false_claim_reputation_penalty must be non-negative")
         if not 0 <= self.commons_starting_stock <= self.commons_capacity:
             raise ValueError("commons_starting_stock must be between zero and commons_capacity")
+        boolean_fields = {
+            "messages_enabled": self.messages_enabled,
+            "pacts_enabled": self.pacts_enabled,
+            "verification_visible": self.verification_visible,
+        }
+        invalid_booleans = [name for name, value in boolean_fields.items() if type(value) is not bool]
+        if invalid_booleans:
+            raise ValueError(f"these config values must be booleans: {', '.join(invalid_booleans)}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -207,6 +236,9 @@ class WorldConfig:
             "restore_amount": self.restore_amount,
             "pact_duration": self.pact_duration,
             "offer_duration": self.offer_duration,
+            "messages_enabled": self.messages_enabled,
+            "pacts_enabled": self.pacts_enabled,
+            "verification_visible": self.verification_visible,
         }
 
 

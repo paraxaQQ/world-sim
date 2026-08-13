@@ -17,6 +17,25 @@ ALLOWED_ACTION_SCHEMAS: tuple[dict[str, Any], ...] = (
 )
 
 
+def allowed_action_schemas(
+    *,
+    messages_enabled: bool,
+    pacts_enabled: bool,
+) -> tuple[dict[str, Any], ...]:
+    """Return the action surface for the active experimental capability condition."""
+
+    disabled_kinds: set[str] = set()
+    if not messages_enabled:
+        disabled_kinds.add("message")
+    if not pacts_enabled:
+        disabled_kinds.update({"offer_pact", "accept_pact"})
+    return tuple(
+        dict(schema)
+        for schema in ALLOWED_ACTION_SCHEMAS
+        if str(schema["kind"]) not in disabled_kinds
+    )
+
+
 @dataclass(frozen=True)
 class ParsedAction:
     kind: str

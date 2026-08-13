@@ -11,9 +11,11 @@ def calculate_metrics(result: SimulationResult) -> dict[str, int]:
     claim_events = [event for event in result.events if event["kind"] == "claim_resolved"]
     extraction_events = [event for event in result.events if event["kind"] == "commons_extracted"]
     restoration_events = [event for event in result.events if event["kind"] == "commons_restored"]
+    turn_starts = [event for event in result.events if event["kind"] == "turn_started"]
     final_agents = result.final_state["agents"]
     return {
         "living_agents": sum(1 for agent in final_agents if agent["alive"]),
+        "alive_agent_turns": sum(len(event["detail"]["order"]) for event in turn_starts),
         "total_final_energy": sum(int(agent["energy"]) for agent in final_agents if agent["alive"]),
         "false_claims": sum(1 for event in claim_events if bool(event["detail"]["false_claim"])),
         "false_claims_paid": sum(

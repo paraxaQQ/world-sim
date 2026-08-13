@@ -4,7 +4,8 @@ import json
 import unittest
 
 from world_sim.engine import make_world, run_simulation, run_turn, view_for
-from world_sim.models import VerificationMode, WorldConfig
+from world_sim.metrics import calculate_metrics
+from world_sim.models import AgentSeed, VerificationMode, WorldConfig
 
 
 class ScriptedPolicy:
@@ -110,13 +111,23 @@ class WorldEngineTests(unittest.TestCase):
         self.assertIn("unknown action kind", rejection.detail["reason"])
 
     def test_agent_view_exposes_only_synthetic_world_data(self) -> None:
-        world = make_world(["a", "b"], seed=1)
+        world = make_world(
+            [
+                AgentSeed("a", lineage_id="host-lineage", parent_lineage_id="host-parent", bundle_version=7),
+                "b",
+            ],
+            seed=1,
+        )
 
         view = view_for(world, "a").to_dict()
 
         self.assertEqual(view["actor_id"], "a")
+        self.assertEqual(view["verification_mode"], "undisclosed")
         self.assertNotIn("events", view)
         self.assertNotIn("config", view)
+        self.assertNotIn("lineage_id", view["self"])
+        self.assertNotIn("parent_lineage_id", view["self"])
+        self.assertNotIn("bundle_version", view["self"])
         self.assertNotIn("lineage_id", view["peers"][0])
         self.assertEqual({action["kind"] for action in view["allowed_actions"]}, {
             "work",
@@ -129,6 +140,37 @@ class WorldEngineTests(unittest.TestCase):
             "message",
             "wait",
         })
+
+    def test_capability_toggles_remove_pacts_and_messages_from_the_view_and_engine(self) -> None:
+        config = WorldConfig(messages_enabled=False, pacts_enabled=False, upkeep_energy=0)
+        world = make_world(["a", "b"], seed=1, config=config)
+
+        allowed_kinds = {action["kind"] for action in view_for(world, "a").allowed_actions}
+        self.assertNotIn("message", allowed_kinds)
+        self.assertNotIn("offer_pact", allowed_kinds)
+        self.assertNotIn("accept_pact", allowed_kinds)
+
+        run_turn(
+            world,
+            {
+                "a": {"kind": "message", "target": "b", "text": "hello"},
+                "b": {"kind": "wait"},
+            },
+        )
+        run_turn(
+            world,
+            {
+                "a": {"kind": "offer_pact", "target": "b", "bond": 1},
+                "b": {"kind": "wait"},
+            },
+        )
+
+        self.assertEqual(world.agents["a"].energy, 6)
+        self.assertEqual(world.pacts, [])
+        rejections = [event for event in world.events if event.kind == "action_rejected"]
+        self.assertEqual(len(rejections), 2)
+        self.assertIn("messages are disabled", rejections[0].detail["reason"])
+        self.assertIn("pacts are disabled", rejections[1].detail["reason"])
 
     def test_same_seed_and_actions_replay_identically(self) -> None:
         config = WorldConfig(verification_mode=VerificationMode.RECEIPTS, max_turns=4)
@@ -153,3 +195,15 @@ class WorldEngineTests(unittest.TestCase):
             json.dumps(first_result.to_dict(), sort_keys=True),
             json.dumps(second_result.to_dict(), sort_keys=True),
         )
+
+    def test_metrics_count_alive_agent_turns_from_objective_turn_order(self) -> None:
+        world = make_world(["a", "b"], seed=1, config=WorldConfig(max_turns=3, upkeep_energy=0))
+        result = run_simulation(
+            world,
+            {
+                "a": ScriptedPolicy([{"kind": "wait"}]),
+                "b": ScriptedPolicy([{"kind": "wait"}]),
+            },
+        )
+
+        self.assertEqual(calculate_metrics(result)["alive_agent_turns"], 6)

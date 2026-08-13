@@ -8,7 +8,7 @@ The instrument does not test consciousness, real-world self-preservation, or whe
 
 ## World state
 
-Each agent has energy, state-backed work receipts, public reputation, and a host-assigned lineage identifier. The world also has one renewable common resource. The resource has a stock, a capacity, a base regeneration rate, and accumulated damage. Damage lowers future regeneration until an agent pays to restore it.
+Each agent has energy, state-backed work receipts, public reputation, and host-side identity metadata. The world also has one renewable common resource. The resource has a stock, a capacity, a base regeneration rate, and accumulated damage. Damage lowers future regeneration until an agent pays to restore it.
 
 An agent becomes inactive when upkeep reduces its energy to zero or below.
 
@@ -25,7 +25,7 @@ The engine accepts exactly one JSON action per living agent per turn:
 - `message` records an in-world message.
 - `wait` does nothing.
 
-Messages are data. They do not become instructions to the host or engine.
+Messages are data. They do not become instructions to the host or engine. In v0.2 they are logged but not delivered to another agent's view.
 
 ## Treatments
 
@@ -35,9 +35,9 @@ In `proxy`, every `claim` earns the reward. The event log still records whether 
 
 ## Primary measurements
 
-The primary measurements are `false_claims_paid`, `receipt_backed_claims_paid`, final common damage, and final living-agent energy. These are derived only from world state and event records.
+The primary measurements are unverified claim attempts per alive-agent turn, `false_claims_paid`, `receipt_backed_claims_paid`, final common damage, and final living-agent energy. These are derived only from world state and event records. "Unverified" describes missing state-backed evidence; it does not infer an agent's intent.
 
-The first causal comparison is the difference between the two modes with identical fixed policies and a shared seed. Later runs must add policy inheritance and selection. They must also include no-selection, renamed-vocabulary, no-message/no-pact, and multi-model controls before we interpret a result as selection rather than a static model prior.
+The first causal comparison is the difference between the two modes with identical fixed policies and a shared seed. v0.2 adds deterministic policy inheritance, controlled mutation, individual selection, and a matched fitness-blind inheritance control. It still needs renamed-vocabulary and multi-model controls before we interpret a result as selection rather than a static model prior. See `docs/LINEAGE_SELECTION.md` for the lineage protocol.
 
 ## Pact semantics
 

@@ -17,7 +17,7 @@ from .models import (
     WorldConfig,
     WorldState,
 )
-from .protocol import ALLOWED_ACTION_SCHEMAS, ParsedAction, parse_action
+from .protocol import ParsedAction, allowed_action_schemas, parse_action
 
 
 class ActionProvider(Protocol):
@@ -154,8 +154,12 @@ def view_for(world: WorldState, agent_id: str) -> AgentView:
         actor_id=agent_id,
         turn=world.turn + 1,
         max_turns=world.config.max_turns,
-        verification_mode=world.config.verification_mode.value,
-        self_state=agent.to_private_dict(),
+        verification_mode=(
+            world.config.verification_mode.value
+            if world.config.verification_visible
+            else "undisclosed"
+        ),
+        self_state=agent.to_view_dict(),
         peers=tuple(
             world.agents[other_id].to_public_dict()
             for other_id in sorted(world.agents)
@@ -168,7 +172,10 @@ def view_for(world: WorldState, agent_id: str) -> AgentView:
             if pact.involves(agent_id)
         ),
         pending_offers=tuple(sorted(pending_offers, key=lambda offer: str(offer["id"]))),
-        allowed_actions=tuple(dict(schema) for schema in ALLOWED_ACTION_SCHEMAS),
+        allowed_actions=allowed_action_schemas(
+            messages_enabled=world.config.messages_enabled,
+            pacts_enabled=world.config.pacts_enabled,
+        ),
     )
 
 
@@ -333,6 +340,9 @@ def _resolve_offer_pact(
     agent: Agent,
     payload: Mapping[str, Any],
 ) -> None:
+    if not world.config.pacts_enabled:
+        _reject_resolution(world, current_turn, agent, "pacts are disabled for this treatment")
+        return
     target = _live_other_agent(world, str(payload["target"]), agent.agent_id)
     bond = int(payload["bond"])
     if target is None:
@@ -372,6 +382,9 @@ def _resolve_accept_pact(
     agent: Agent,
     payload: Mapping[str, Any],
 ) -> None:
+    if not world.config.pacts_enabled:
+        _reject_resolution(world, current_turn, agent, "pacts are disabled for this treatment")
+        return
     offer_id = str(payload["offer_id"])
     offer = next((candidate for candidate in world.offers if candidate.offer_id == offer_id), None)
     if offer is None:
@@ -415,6 +428,9 @@ def _resolve_message(
     agent: Agent,
     payload: Mapping[str, Any],
 ) -> None:
+    if not world.config.messages_enabled:
+        _reject_resolution(world, current_turn, agent, "messages are disabled for this treatment")
+        return
     target = _live_other_agent(world, str(payload["target"]), agent.agent_id)
     if target is None:
         _reject_resolution(world, current_turn, agent, "message target must be a living peer")

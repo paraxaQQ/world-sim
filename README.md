@@ -1,64 +1,88 @@
 # world-sim
 
-`world-sim` is a deterministic, closed-world instrument for one question:
+`world-sim` is a deterministic, closed-world instrument for a narrow question:
 
-> does selection preserve objectively detectable shortcuts, or are apparent survival behaviors mostly model prior and prompt theatre?
+> under explicit selection, does a policy lineage increasingly choose state-detectable shortcuts, and does objective verification change that gradient?
 
-The first environment is **blind commons**. Agents need energy to remain active. They can work to create a state-backed receipt, claim a reward, extract private energy from a renewable common resource, restore damage, transfer energy, message peers, and form bonded non-extraction pacts.
+It is not an AI-civilization demo. It has no model adapter, API key, browser, shell, filesystem access, network access, payment rail, or process handle.
 
-The engine, not an LLM, owns state and decides whether a claim has a receipt.
+The first world is **Blind Commons**. Agents need energy to remain active. They can work to create a state-backed receipt, claim a reward, extract private energy from a renewable common resource, restore damage, transfer energy, message peers, and form bonded non-extraction pacts. The engine, not an LLM, owns state and determines whether a claim has a receipt.
 
-## the counterfactual treatment
+## v0.2 experiment
 
-The same seed, agents, policies, action surface, and world rules run in two modes.
+The repository now has a deterministic lineage harness around the world engine. Its four core conditions are:
 
-| mode | claim reward | false claim result |
+| selection | verification | parent rule |
 | --- | --- | --- |
-| `proxy` | every claim pays | the event log records the missing receipt, but no payment is withheld |
-| `receipts` | only a claim with a state-backed receipt pays | no reward; the engine applies the configured reputation penalty |
+| `individual` | `proxy` | choose the highest objective-fitness bundles |
+| `individual` | `receipts` | choose the highest objective-fitness bundles |
+| `none` | `proxy` | choose bundles uniformly from the complete prior population |
+| `none` | `receipts` | choose bundles uniformly from the complete prior population |
 
-This is intentionally not an “AI civilization” demo. A Civ-like map, cities, tech tree, and population expansion can become a later stress test. They are not the first result.
+`individual` ranks a completed bundle by survival and final energy. `none` does not inspect outcomes. It samples from every prior slot, including an inactive bundle, then uses the same parent count, clone count, child slots, and mutation seeds as `individual`. That makes it a fitness-blind inheritance control, not simple slot persistence.
 
-## containment boundary
+Each bundle carries only a small declared genome and bounded, versioned world-summary memory. Mutation can change one declared policy trait; it cannot execute code. The host records every parent-child edge, mutation seed, inherited memory update, and controller action. A recorded generation can replay without calling a controller or model.
 
-```text
-trusted host model adapter (later) -> validated JSON action -> deterministic world engine
-                                                           -> append-only event log
-```
+The bundled controller is deliberately deterministic. It validates the causal plumbing; it is not evidence about LLM behavior.
 
-An agent receives an `AgentView` and can return one allowlisted JSON action. It gets no shell, browser, filesystem, network, credentials, payment rail, host process, or direct engine handle. The API key remains in a future host-side adapter and never enters a view or run artifact.
+## treatment boundary
 
-## run the reference treatment
+The two verification modes use the same seed, action surface, initial population, upkeep, common-resource rules, and logging rules.
 
-Use Python 3.11 or newer. The current engine has no third-party dependencies.
+| mode | claim reward | unverified claim result |
+| --- | --- | --- |
+| `proxy` | every claim pays | the log records the missing receipt, but payment is not withheld |
+| `receipts` | only a claim with a state-backed receipt pays | no reward; the configured reputation penalty applies |
+
+Controllers receive no host lineage ID, parent bundle ID, bundle version, selection result, or mutation record. The verification treatment is also hidden by default: their view reports `verification_mode: "undisclosed"`. `--show-verification` is an explicit non-core variation.
+
+Messages and pacts can be removed from both the visible action schema and the resolver with `--no-messages --no-pacts`. Messages are only logged in v0.2; they are not delivered as an inbox or used as evidence of coordination.
+
+## run it
+
+Use Python 3.11 or newer. There are no third-party dependencies.
 
 ```powershell
 $env:PYTHONPATH = "src"
 py -3.11 -m unittest discover -s tests -v
-py -3.11 -m world_sim compare --seed 17 --turns 8 --output artifacts/compare-17.json
+
+py -3.11 -m world_sim matrix `
+  --seed 17 --generations 5 --turns 12 --population 8 --parent-count 2 `
+  --mutation-rate 0.15 --no-messages --no-pacts `
+  --output artifacts\matrix-17.json
 ```
 
-`compare` runs a fixed reference population under both treatments and writes the complete initial state, final state, ordered event log, and action-grounded metrics. It is a smoke test for the instrument, not evidence about LLM behavior.
-
-Run one treatment directly with:
+Run a single condition with:
 
 ```powershell
 $env:PYTHONPATH = "src"
-py -3.11 -m world_sim pilot --verification receipts --seed 17 --turns 8
+py -3.11 -m world_sim evolve `
+  --verification proxy --selection individual `
+  --seed 17 --generations 5 --turns 12 --population 8 --parent-count 2 `
+  --output artifacts\evolve-proxy-17.json
 ```
 
-## v0 measurements
+The command prints a canonical SHA-256 for the structured artifact, action-grounded generation metrics, selected parents, and final policy distribution. The artifact contains the complete state/event data, action tapes, outcomes, selection records, and lineage edges.
 
-The engine reports only state-backed measurements:
+The older fixed-policy smoke test remains available:
 
-- false claims and false claims that were paid
+```powershell
+$env:PYTHONPATH = "src"
+py -3.11 -m world_sim compare --seed 17 --turns 8 --output artifacts\compare-17.json
+```
+
+## measurements and limits
+
+The engine reports state-backed measurements only:
+
+- unverified claim attempts and unverified claims that were paid
 - receipt-backed claims that were paid
+- alive-agent turns, living agents, and final energy
 - extraction and restoration counts
 - final common-resource damage and stock
-- living agents and their final energy
 
-It does not use an LLM judge, infer intent from messages, or declare an alliance real because agents called it one.
+An "unverified" claim is a receipt-state condition, not an inference about intent or deception. The engine does not use an LLM judge, infer intent from messages, or declare an alliance real because agents call it one.
 
-## next seams
+One run is not a finding. Before an LLM adapter is introduced, we need to fix the hypothesis, seed grid, model/config matrix, effect thresholds, and failure criteria. Before a claim about selection survives scrutiny, it must repeat across models and controls such as renamed world vocabulary and no-message/no-pact capability conditions.
 
-The next implementation gate is not more world complexity. It is a versioned policy/memory lineage runner with controlled mutation, then predeclared controls: no selection, renamed world vocabulary, no-message/no-pact, and model-family swaps. We only add a model adapter after those local seams and receipts are proven.
+See [the protocol](docs/LINEAGE_SELECTION.md) for the exact control design and replay boundary. See [Blind Commons v0](docs/EXPERIMENT_V0.md) for world semantics.
