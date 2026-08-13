@@ -98,7 +98,9 @@ This is a local preflight, not a provider-side dollar guarantee. Zen reports cos
 
 The first paid attempt used `--reasoning-effort low`. It made one billable DeepSeek request, exhausted the 1,024-token completion budget, and stopped before contacting the other models. See [the retained failure receipt](outputs/v0.4.3-paid-live-smoke-attempt.md).
 
-The command below uses the compatibility-first profile for a fresh paid smoke. It sends each allowlisted model its documented `thinking: {"type": "disabled"}` control. Paid smoke runs are limited to one day so preflight prices every potential call.
+The compatibility-first paid smoke then completed four of four model calls for `$0.00210943` provider-reported cost and replayed offline with an identical result hash. One model submitted a malformed action, which the objective protocol converted to `rest` while preserving its valid speech. See [the retained proof receipt](outputs/v0.4.4-paid-live-smoke-proof.md).
+
+The command below sends each allowlisted model its documented `thinking: {"type": "disabled"}` control. Paid smoke runs are limited to one day so preflight prices every potential call.
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -115,7 +117,7 @@ try {
     --max-paid-usd 0.05 `
     --timeout-seconds 120 `
     --show-transcript `
-    --output artifacts\live-smoke-paid-mixed-17.json
+    --output artifacts\live-smoke-paid-direct-17.json
   if ($LASTEXITCODE -ne 0) {
     throw "paid smoke run failed; preserve the artifact and do not retry"
   }
