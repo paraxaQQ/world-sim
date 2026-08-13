@@ -4,7 +4,8 @@ import hashlib
 import json
 import random
 import re
-from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from .models import (
@@ -31,6 +32,11 @@ class SurvivalChoiceProvider(Protocol):
         """Return one primary action and optional speech from a capability-free view."""
 
 
+_ProposalSource = Callable[
+    [int, Mapping[str, SurvivorView]], Mapping[str, object]
+]
+
+
 def make_survival_world(
     names: Sequence[str] = DEFAULT_SURVIVOR_NAMES,
     *,
@@ -41,10 +47,14 @@ def make_survival_world(
     clean_names = tuple(name.strip() for name in names)
     if len(clean_names) < 2:
         raise ValueError("a survival world needs at least two named survivors")
-    if len(clean_names) - 1 > active_config.max_inbox_messages:
-        raise ValueError("max_inbox_messages must hold one message from every peer")
+    required_inbox = (len(clean_names) - 1) * active_config.slots_per_cycle
+    if required_inbox > active_config.max_inbox_messages:
+        raise ValueError(
+            "max_inbox_messages must hold one cycle of messages from every peer"
+        )
     if any(
-        re.fullmatch(r"[A-Za-z][A-Za-z'-]{0,31}", name) is None for name in clean_names
+        re.fullmatch(r"[A-Za-z][A-Za-z'-]{0,31}", name) is None
+        for name in clean_names
     ):
         raise ValueError(
             "survivor names must use 1-32 letters, apostrophes, or hyphens"
@@ -81,42 +91,57 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
         raise ValueError(f"unknown survivor {name!r}")
     if not survivor.alive:
         raise ValueError(f"dead survivor {name!r} cannot receive a world view")
+    if survivor.resting:
+        raise ValueError(f"resting survivor {name!r} cannot receive another view")
+    cycle = world.day + 1
+    slot = world.slot or 1
     living_peers = [peer for peer in world.alive_names() if peer != name]
-    delivery_day = world.day + 1
     inbox = [
         message.to_dict()
         for message in world.messages
-        if message.day == delivery_day
+        if message.sequence > survivor.last_observed_event_sequence
         and (message.recipient == name or message.recipient == "everyone")
         and message.speaker != name
     ]
-    inbox.sort(
-        key=lambda message: (
-            world.survivors[str(message["speaker"])].seat_id,
-            str(message["id"]),
-        )
+    inbox.sort(key=lambda message: int(message["sequence"]))
+    recent_events = _bounded_recent_events(
+        world.events,
+        viewer=name,
+        after_sequence=survivor.last_observed_event_sequence,
+        limit=world.config.max_recent_events,
     )
     config = world.config
-    daily_cost = _daily_cost(config, survivor)
     return SurvivorView(
         name=name,
-        day=delivery_day,
+        day=cycle,
+        slot=slot,
+        slots_remaining=config.slots_per_cycle - slot + 1,
         self_state=survivor.to_view_dict(),
-        others=tuple(world.survivors[peer].to_public_dict() for peer in living_peers),
+        others=tuple(
+            world.survivors[peer].to_public_dict() for peer in living_peers
+        ),
         resources=world.resources.to_dict(),
         inbox=tuple(inbox[: config.max_inbox_messages]),
+        recent_events=recent_events,
         rules={
             "max_energy": config.max_energy,
-            "daily_energy_cost_tonight": daily_cost,
+            "cycle_energy_cost_after_rest": _cycle_cost(config, survivor),
+            "slots_per_cycle": config.slots_per_cycle,
+            "slots_remaining": config.slots_per_cycle - slot + 1,
+            "final_slot_requires_rest": True,
+            "exhaustion_energy_penalty": config.exhaustion_energy_penalty,
             "action_energy_costs": config.action_energy_costs,
-            "forage_food_range": [config.forage_min_food, config.forage_max_food],
+            "forage_food_range": [
+                config.forage_min_food,
+                config.forage_max_food,
+            ],
             "gather_wood_yield": config.gather_wood_yield,
             "food_regeneration": config.food_regeneration,
             "wood_regeneration": config.wood_regeneration,
             "food_energy": config.food_energy,
             "max_food_eaten": config.max_food_eaten,
             "shelter_wood_cost": config.shelter_wood_cost,
-            "shelter_daily_discount": config.shelter_energy_discount,
+            "shelter_cycle_discount": config.shelter_energy_discount,
             "speech_energy_cost": config.speech_energy_cost,
             "max_speech_chars": config.max_speech_chars,
             "death": "energy at or below 0 is permanent death",
@@ -135,39 +160,92 @@ def run_survival(
     days: int | None = None,
 ) -> SurvivalResult:
     if days is not None and days < 1:
-        raise ValueError("days must be positive when provided")
+        raise ValueError("cycles must be positive when provided")
     missing = sorted(set(world.alive_names()) - set(providers))
     if missing:
         raise ValueError(f"missing choice providers for: {', '.join(missing)}")
-    initial_state = _snapshot(world)
+    initial_state = _snapshot(world, include_observation_history=True)
     event_start = len(world.events)
-    remaining_days = world.config.max_days - world.day
-    requested_days = remaining_days if days is None else min(days, remaining_days)
-    for _ in range(requested_days):
-        if world.finished:
-            break
+    remaining_cycles = world.config.max_days - world.day
+    requested_cycles = (
+        remaining_cycles if days is None else min(days, remaining_cycles)
+    )
+
+    def source(
+        slot: int, views: Mapping[str, SurvivorView]
+    ) -> Mapping[str, object]:
+        del slot
         proposals: dict[str, Mapping[str, object]] = {}
-        for survivor in world.living_by_seat():
-            view = survival_view_for(world, survivor.name)
+        for survivor in _ordered_view_survivors(world, views):
+            view = views[survivor.name]
             try:
                 proposal = providers[survivor.name].decide(view)
-            except Exception as error:  # noqa: BLE001 - provider failures must retain their cause.
+            except Exception as error:  # noqa: BLE001 - retain provider cause.
                 raise RuntimeError(
                     f"survival choice provider failed for {survivor.name!r}"
                 ) from error
             if not isinstance(proposal, Mapping):
                 raise TypeError(
-                    f"survival choice provider for {survivor.name!r} returned a non-object choice"
+                    f"survival choice provider for {survivor.name!r} "
+                    "returned a non-object choice"
                 )
             proposals[survivor.name] = proposal
-        run_survival_day(world, proposals)
-    return SurvivalResult(
-        initial_state=initial_state,
-        final_state=_snapshot(world),
-        events=tuple(event.to_dict() for event in world.events[event_start:]),
-        choice_tape=_choice_tape(world.events[event_start:]),
-        event_sequence_base=world.event_sequence_offset + event_start,
-    )
+        return proposals
+
+    for _ in range(requested_cycles):
+        if world.finished:
+            break
+        _execute_cycle(world, source)
+    return _result_from(world, initial_state, event_start)
+
+
+def run_survival_cycle(
+    world: SurvivalWorld,
+    proposals_by_slot: Sequence[Mapping[str, object]],
+) -> tuple[SurvivalEvent, ...]:
+    if isinstance(proposals_by_slot, Mapping) or not isinstance(
+        proposals_by_slot, Sequence
+    ):
+        raise TypeError("proposals_by_slot must be a sequence of slot maps")
+    if not 1 <= len(proposals_by_slot) <= world.config.slots_per_cycle:
+        raise ValueError(
+            "proposal sequence must contain between 1 and "
+            f"{world.config.slots_per_cycle} slot maps"
+        )
+    if any(not isinstance(proposals, Mapping) for proposals in proposals_by_slot):
+        raise TypeError("every slot proposal value must be an object")
+
+    consumed_slots = 0
+
+    def dry_source(
+        slot: int, views: Mapping[str, SurvivorView]
+    ) -> Mapping[str, object]:
+        nonlocal consumed_slots
+        del views
+        consumed_slots = slot
+        try:
+            return proposals_by_slot[slot - 1]
+        except IndexError as error:
+            raise ValueError(f"missing proposal map for slot {slot}") from error
+
+    _execute_cycle(deepcopy(world), dry_source)
+    if len(proposals_by_slot) != consumed_slots:
+        raise ValueError("proposal sequence contains unreachable slot maps")
+
+    def source(
+        slot: int, views: Mapping[str, SurvivorView]
+    ) -> Mapping[str, object]:
+        del views
+        return proposals_by_slot[slot - 1]
+
+    return _execute_cycle(world, source)
+
+
+def run_survival_day(
+    world: SurvivalWorld,
+    proposals_by_slot: Sequence[Mapping[str, object]],
+) -> tuple[SurvivalEvent, ...]:
+    return run_survival_cycle(world, proposals_by_slot)
 
 
 def replay_survival(result: SurvivalResult) -> SurvivalResult:
@@ -176,104 +254,159 @@ def replay_survival(result: SurvivalResult) -> SurvivalResult:
         event_sequence_offset=result.event_sequence_base,
     )
     event_start = len(world.events)
-    records_by_day: dict[int, list[dict[str, Any]]] = {}
+    records_by_cycle_slot: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for record in result.choice_tape:
-        day = int(record["day"])
-        records_by_day.setdefault(day, []).append(record)
+        cycle = _strict_cycle_alias(record, context="choice tape")
+        slot = int(record.get("slot", 1))
+        records_by_cycle_slot.setdefault((cycle, slot), []).append(record)
 
-    for day in sorted(records_by_day):
-        if day != world.day + 1:
-            raise ValueError(f"choice tape skips from day {world.day} to day {day}")
-        records = records_by_day[day]
-        expected_names = [survivor.name for survivor in world.living_by_seat()]
-        actual_names = [str(record["actor"]) for record in records]
-        if actual_names != expected_names:
+    cycles = sorted({cycle for cycle, _ in records_by_cycle_slot})
+    for cycle in cycles:
+        if cycle != world.day + 1:
             raise ValueError(
-                f"choice tape actors for day {day} do not match living seat order"
+                f"choice tape skips from cycle {world.day} to cycle {cycle}"
             )
-        proposals: dict[str, object] = {}
-        for record in records:
-            actor = str(record["actor"])
-            actual_view_hash = _view_sha256(survival_view_for(world, actor))
-            if actual_view_hash != record["view_sha256"]:
-                raise ValueError(
-                    f"choice tape view hash mismatch for {actor!r} on day {day}"
-                )
-            proposals[actor] = record["raw_choice"]
-        run_survival_day(world, proposals)
+        used_slots: set[int] = set()
 
-    replayed = SurvivalResult(
-        initial_state=_canonical_json_value(result.initial_state),
-        final_state=_snapshot(world),
-        events=tuple(event.to_dict() for event in world.events[event_start:]),
-        choice_tape=_choice_tape(world.events[event_start:]),
-        event_sequence_base=result.event_sequence_base,
+        def source(
+            slot: int, views: Mapping[str, SurvivorView]
+        ) -> Mapping[str, object]:
+            records = records_by_cycle_slot.get((cycle, slot))
+            if records is None:
+                raise ValueError(
+                    f"choice tape has no records for cycle {cycle} slot {slot}"
+                )
+            used_slots.add(slot)
+            expected_names = list(views)
+            actual_names = [str(record["actor"]) for record in records]
+            if actual_names != expected_names:
+                raise ValueError(
+                    f"choice tape actors for cycle {cycle} slot {slot} "
+                    "do not match awake seat order"
+                )
+            proposals: dict[str, object] = {}
+            for record in records:
+                actor = str(record["actor"])
+                actual_view_hash = _view_sha256(views[actor])
+                if actual_view_hash != record["view_sha256"]:
+                    raise ValueError(
+                        f"choice tape view hash mismatch for {actor!r} "
+                        f"on cycle {cycle} slot {slot}"
+                    )
+                proposals[actor] = record["raw_choice"]
+            return proposals
+
+        _execute_cycle(world, source)
+        recorded_slots = {
+            slot for recorded_cycle, slot in records_by_cycle_slot if recorded_cycle == cycle
+        }
+        if used_slots != recorded_slots:
+            raise ValueError(f"choice tape has unreachable slots in cycle {cycle}")
+
+    replayed = _result_from(
+        world,
+        _canonical_json_value(result.initial_state),
+        event_start,
     )
-    if replayed.final_state != result.final_state or replayed.events != result.events:
+    if (
+        replayed.final_state != result.final_state
+        or replayed.events != result.events
+        or replayed.choice_tape != result.choice_tape
+    ):
         raise ValueError("choice tape replay does not match the recorded result")
     return replayed
 
 
-def run_survival_day(
+def _execute_cycle(
     world: SurvivalWorld,
-    proposals: Mapping[str, object],
+    source: _ProposalSource,
 ) -> tuple[SurvivalEvent, ...]:
     if world.finished:
         raise RuntimeError(
             f"survival world is already finished: {world.finished_reason}"
         )
-    unknown = sorted(set(proposals) - set(world.survivors))
-    if unknown:
-        raise ValueError(f"choices reference unknown survivors: {', '.join(unknown)}")
-    living = world.living_by_seat()
-    dead_submitters = sorted(
-        name for name in proposals if not world.survivors[name].alive
-    )
-    if dead_submitters:
-        raise ValueError(
-            f"dead survivors cannot submit choices: {', '.join(dead_submitters)}"
-        )
-    missing = [survivor.name for survivor in living if survivor.name not in proposals]
-    if missing:
-        raise ValueError(f"missing choices for living survivors: {', '.join(missing)}")
-
-    day = world.day + 1
+    cycle = world.day + 1
     event_start = len(world.events)
-    start_names = [survivor.name for survivor in living]
-    _emit(world, day, "day_started", None, survivors=start_names)
-    parsed = _parse_day_choices(world, day, living, proposals)
-    _charge_choice_costs(world, day, living, parsed)
+    for survivor in world.living_by_seat():
+        survivor.resting = False
+    world.slot = 0
+    _emit(
+        world,
+        cycle,
+        0,
+        "cycle_started",
+        None,
+        survivors=world.alive_names(),
+        slots=world.config.slots_per_cycle,
+    )
+    for slot in range(1, world.config.slots_per_cycle + 1):
+        awake = _awake_by_seat(world)
+        if not awake:
+            break
+        world.slot = slot
+        _emit(
+            world,
+            cycle,
+            slot,
+            "slot_started",
+            None,
+            awake=[survivor.name for survivor in awake],
+        )
+        views = {
+            survivor.name: survival_view_for(world, survivor.name)
+            for survivor in awake
+        }
+        proposals = source(slot, views)
+        _run_slot(world, cycle, slot, awake, views, proposals)
 
-    active = [survivor for survivor in living if survivor.alive]
-    _resolve_forage(world, day, active, parsed)
-    _resolve_wood_gathering(world, day, active, parsed)
-    _resolve_gifts(world, day, active, parsed)
-    _resolve_personal_actions(world, day, active, parsed)
-    _resolve_speech(world, day, active, parsed)
-    _apply_daily_cost(world, day)
-    _regenerate_resources(world, day)
-    world.day = day
-    _finalize_survival(world, day)
+    _force_collapse(world, cycle)
+    _apply_cycle_cost(world, cycle)
+    _regenerate_resources(world, cycle)
+    world.day = cycle
+    world.slot = 0
+    for survivor in world.living_by_seat():
+        survivor.resting = False
+    _finalize_survival(world, cycle)
     return tuple(world.events[event_start:])
 
 
-def _parse_day_choices(
+def _run_slot(
     world: SurvivalWorld,
-    day: int,
-    living: Sequence[Survivor],
+    cycle: int,
+    slot: int,
+    awake: Sequence[Survivor],
+    views: Mapping[str, SurvivorView],
     proposals: Mapping[str, object],
-) -> dict[str, ParsedSurvivalChoice]:
-    living_names = [survivor.name for survivor in living]
+) -> None:
+    if not isinstance(proposals, Mapping):
+        raise TypeError(f"slot {slot} proposals must be an object")
+    awake_names = [survivor.name for survivor in awake]
+    unknown = sorted(set(proposals) - set(awake_names))
+    if unknown:
+        raise ValueError(
+            f"slot {slot} choices reference unavailable survivors: {', '.join(unknown)}"
+        )
+    missing = [name for name in awake_names if name not in proposals]
+    if missing:
+        raise ValueError(
+            f"slot {slot} is missing choices for awake survivors: {', '.join(missing)}"
+        )
+    raw_choices = {
+        name: _canonical_json_value(proposals[name]) for name in awake_names
+    }
+    observed_sequence = world.event_sequence_offset + len(world.events)
+    living_names = world.alive_names()
     parsed: dict[str, ParsedSurvivalChoice] = {}
-    for survivor in living:
+    for survivor in awake:
+        raw_choice = raw_choices[survivor.name]
         peers = [name for name in living_names if name != survivor.name]
-        raw_choice = _canonical_json_value(proposals[survivor.name])
         _emit(
             world,
-            day,
+            cycle,
+            slot,
             "choice_submitted",
             survivor.name,
-            view_sha256=_view_sha256(survival_view_for(world, survivor.name)),
+            view_sha256=_view_sha256(views[survivor.name]),
             raw_choice=raw_choice,
         )
         choice = parse_survival_choice(
@@ -284,40 +417,88 @@ def _parse_day_choices(
             max_speech_chars=world.config.max_speech_chars,
         )
         parsed[survivor.name] = choice
-        _emit(world, day, "choice_recorded", survivor.name, choice=choice.to_dict())
+        _emit(
+            world,
+            cycle,
+            slot,
+            "choice_recorded",
+            survivor.name,
+            choice=choice.to_dict(),
+        )
         if choice.action_error is not None:
             _emit(
                 world,
-                day,
+                cycle,
+                slot,
                 "action_rejected",
                 survivor.name,
                 reason=choice.action_error,
-                fallback="rest",
+                fallback="no_action",
             )
         if choice.speech_error is not None:
             _emit(
-                world, day, "speech_rejected", survivor.name, reason=choice.speech_error
+                world,
+                cycle,
+                slot,
+                "speech_rejected",
+                survivor.name,
+                reason=choice.speech_error,
             )
-    return parsed
+    for survivor in awake:
+        survivor.last_observed_event_sequence = observed_sequence
+
+    resolving = list(awake)
+    if slot == world.config.slots_per_cycle:
+        resolving = []
+        for survivor in awake:
+            choice = parsed[survivor.name]
+            if choice.action_error is None and choice.action.kind == "rest":
+                resolving.append(survivor)
+            else:
+                _emit(
+                    world,
+                    cycle,
+                    slot,
+                    "deadline_choice_cancelled",
+                    survivor.name,
+                    attempted_choice=parsed[survivor.name].to_dict(),
+                )
+
+    _charge_choice_costs(world, cycle, slot, resolving, parsed)
+    active = [survivor for survivor in resolving if survivor.alive]
+    valid_action = [
+        survivor
+        for survivor in active
+        if parsed[survivor.name].action_error is None
+    ]
+    _resolve_forage(world, cycle, slot, valid_action, parsed)
+    _resolve_wood_gathering(world, cycle, slot, valid_action, parsed)
+    _resolve_gifts(world, cycle, slot, valid_action, parsed)
+    _resolve_personal_actions(world, cycle, slot, valid_action, parsed)
+    _resolve_speech(world, cycle, slot, active, parsed)
 
 
 def _charge_choice_costs(
     world: SurvivalWorld,
-    day: int,
-    living: Sequence[Survivor],
+    cycle: int,
+    slot: int,
+    survivors: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
     costs = world.config.action_energy_costs
-    for survivor in living:
+    for survivor in survivors:
         choice = parsed[survivor.name]
-        action_cost = costs[choice.action.kind]
+        action_cost = (
+            costs[choice.action.kind] if choice.action_error is None else 0
+        )
         speech_cost = (
             world.config.speech_energy_cost if choice.speech is not None else 0
         )
         survivor.energy -= action_cost + speech_cost
         _emit(
             world,
-            day,
+            cycle,
+            slot,
             "choice_energy_paid",
             survivor.name,
             action=choice.action.kind,
@@ -325,25 +506,29 @@ def _charge_choice_costs(
             speech_cost=speech_cost,
             energy_after=survivor.energy,
         )
-    for survivor in living:
+    for survivor in survivors:
         if survivor.energy <= 0:
-            _die(world, day, survivor, "choice_energy_depleted")
+            _die(world, cycle, slot, survivor, "choice_energy_depleted")
 
 
 def _resolve_forage(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
     foragers = [
-        survivor for survivor in active if parsed[survivor.name].action.kind == "forage"
+        survivor
+        for survivor in active
+        if parsed[survivor.name].action.kind == "forage"
     ]
-    order = _resolution_order(world, day, foragers, "forage")
+    order = _resolution_order(world, cycle, slot, foragers, "forage")
     wanted = {
         survivor.seat_id: _stable_range(
             world.seed,
-            day,
+            cycle,
+            slot,
             survivor.seat_id,
             "forage-yield",
             world.config.forage_min_food,
@@ -353,7 +538,7 @@ def _resolve_forage(
     }
     gathered = {survivor.seat_id: 0 for survivor in order}
     for survivor in order:
-        if world.resources.food > 0 and wanted[survivor.seat_id] > 0:
+        if world.resources.food > 0:
             world.resources.food -= 1
             gathered[survivor.seat_id] += 1
     for survivor in order:
@@ -368,7 +553,8 @@ def _resolve_forage(
         survivor.food += amount
         _emit(
             world,
-            day,
+            cycle,
+            slot,
             "food_foraged",
             survivor.name,
             food_gathered=amount,
@@ -378,7 +564,8 @@ def _resolve_forage(
 
 def _resolve_wood_gathering(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
@@ -387,13 +574,16 @@ def _resolve_wood_gathering(
         for survivor in active
         if parsed[survivor.name].action.kind == "gather_wood"
     ]
-    for survivor in _resolution_order(world, day, gatherers, "gather-wood"):
+    for survivor in _resolution_order(
+        world, cycle, slot, gatherers, "gather-wood"
+    ):
         gathered = min(world.config.gather_wood_yield, world.resources.wood)
         world.resources.wood -= gathered
         survivor.wood += gathered
         _emit(
             world,
-            day,
+            cycle,
+            slot,
             "wood_gathered",
             survivor.name,
             wood_gathered=gathered,
@@ -403,7 +593,8 @@ def _resolve_wood_gathering(
 
 def _resolve_gifts(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
@@ -412,24 +603,35 @@ def _resolve_gifts(
         for survivor in active
         if parsed[survivor.name].action.kind in {"give_food", "give_wood"}
     ]
-    for survivor in _resolution_order(world, day, givers, "give"):
+    for survivor in _resolution_order(world, cycle, slot, givers, "give"):
         action = parsed[survivor.name].action
         resource = "food" if action.kind == "give_food" else "wood"
         target = world.survivors[str(action.payload["target"])]
         amount = int(action.payload["amount"])
         if not target.alive:
             _reject_resolution(
-                world, day, survivor, "gift target died before resolution"
+                world,
+                cycle,
+                slot,
+                survivor,
+                "gift target died before resolution",
             )
             continue
         if int(getattr(survivor, resource)) < amount:
-            _reject_resolution(world, day, survivor, f"not enough {resource} to give")
+            _reject_resolution(
+                world,
+                cycle,
+                slot,
+                survivor,
+                f"not enough {resource} to give",
+            )
             continue
         setattr(survivor, resource, int(getattr(survivor, resource)) - amount)
         setattr(target, resource, int(getattr(target, resource)) + amount)
         _emit(
             world,
-            day,
+            cycle,
+            slot,
             "resource_given",
             survivor.name,
             target=target.name,
@@ -440,40 +642,51 @@ def _resolve_gifts(
 
 def _resolve_personal_actions(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
     personal = [
         survivor
         for survivor in active
-        if parsed[survivor.name].action.kind in {"rest", "eat", "build_shelter"}
+        if parsed[survivor.name].action.kind
+        in {"rest", "eat", "build_shelter"}
     ]
-    for survivor in _resolution_order(world, day, personal, "personal"):
+    for survivor in _resolution_order(world, cycle, slot, personal, "personal"):
         action = parsed[survivor.name].action
         if action.kind == "rest":
-            _emit(world, day, "rested", survivor.name)
+            survivor.resting = True
+            _emit(world, cycle, slot, "rest_started", survivor.name)
         elif action.kind == "eat":
-            _eat(world, day, survivor, action)
+            _eat(world, cycle, slot, survivor, action)
         else:
-            _build_shelter(world, day, survivor)
+            _build_shelter(world, cycle, slot, survivor)
 
 
 def _eat(
-    world: SurvivalWorld, day: int, survivor: Survivor, action: SurvivalAction
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    survivor: Survivor,
+    action: SurvivalAction,
 ) -> None:
     amount = int(action.payload["amount"])
     if survivor.food < amount:
-        _reject_resolution(world, day, survivor, "not enough food to eat")
+        _reject_resolution(
+            world, cycle, slot, survivor, "not enough food to eat"
+        )
         return
     survivor.food -= amount
     before = survivor.energy
     survivor.energy = min(
-        world.config.max_energy, survivor.energy + amount * world.config.food_energy
+        world.config.max_energy,
+        survivor.energy + amount * world.config.food_energy,
     )
     _emit(
         world,
-        day,
+        cycle,
+        slot,
         "food_eaten",
         survivor.name,
         food_eaten=amount,
@@ -481,18 +694,28 @@ def _eat(
     )
 
 
-def _build_shelter(world: SurvivalWorld, day: int, survivor: Survivor) -> None:
+def _build_shelter(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    survivor: Survivor,
+) -> None:
     if survivor.shelter:
-        _reject_resolution(world, day, survivor, "shelter is already built")
+        _reject_resolution(
+            world, cycle, slot, survivor, "shelter is already built"
+        )
         return
     if survivor.wood < world.config.shelter_wood_cost:
-        _reject_resolution(world, day, survivor, "not enough wood to build shelter")
+        _reject_resolution(
+            world, cycle, slot, survivor, "not enough wood to build shelter"
+        )
         return
     survivor.wood -= world.config.shelter_wood_cost
     survivor.shelter = True
     _emit(
         world,
-        day,
+        cycle,
+        slot,
         "shelter_built",
         survivor.name,
         wood_spent=world.config.shelter_wood_cost,
@@ -501,14 +724,15 @@ def _build_shelter(world: SurvivalWorld, day: int, survivor: Survivor) -> None:
 
 def _resolve_speech(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     active: Sequence[Survivor],
     parsed: Mapping[str, ParsedSurvivalChoice],
 ) -> None:
     speakers = [
         survivor for survivor in active if parsed[survivor.name].speech is not None
     ]
-    for survivor in _resolution_order(world, day, speakers, "speech"):
+    for survivor in _resolution_order(world, cycle, slot, speakers, "speech"):
         speech = parsed[survivor.name].speech
         if speech is None:
             continue
@@ -518,47 +742,84 @@ def _resolve_speech(
         ):
             _emit(
                 world,
-                day,
+                cycle,
+                slot,
                 "speech_resolution_rejected",
                 survivor.name,
                 reason="recipient died before resolution",
             )
             continue
+        sequence = world.event_sequence_offset + len(world.events) + 1
         message = SpokenMessage(
-            message_id=f"message-{day}-{len(world.messages) + 1}",
-            day=day + 1,
+            message_id=f"message-{cycle}-{slot}-{len(world.messages) + 1}",
+            sequence=sequence,
+            cycle=cycle,
+            slot=slot,
             speaker=survivor.name,
             recipient=speech.recipient,
             text=speech.text,
         )
         world.messages.append(message)
-        _emit(world, day, "speech_sent", survivor.name, message=message.to_dict())
+        _emit(
+            world,
+            cycle,
+            slot,
+            "speech_sent",
+            survivor.name,
+            message=message.to_dict(),
+        )
 
 
-def _apply_daily_cost(world: SurvivalWorld, day: int) -> None:
+def _force_collapse(world: SurvivalWorld, cycle: int) -> None:
+    slot = world.config.slots_per_cycle
+    for survivor in _awake_by_seat(world):
+        survivor.energy -= world.config.exhaustion_energy_penalty
+        _emit(
+            world,
+            cycle,
+            slot,
+            "forced_collapse",
+            survivor.name,
+            energy_penalty=world.config.exhaustion_energy_penalty,
+            energy_after=survivor.energy,
+        )
+        if survivor.energy <= 0:
+            _die(world, cycle, slot, survivor, "exhaustion_energy_depleted")
+        else:
+            survivor.resting = True
+
+
+def _apply_cycle_cost(world: SurvivalWorld, cycle: int) -> None:
     living = world.living_by_seat()
     for survivor in living:
-        cost = _daily_cost(world.config, survivor)
+        cost = _cycle_cost(world.config, survivor)
         survivor.energy -= cost
         _emit(
             world,
-            day,
-            "daily_energy_paid",
+            cycle,
+            world.config.slots_per_cycle,
+            "cycle_energy_paid",
             survivor.name,
             amount=cost,
             energy_after=survivor.energy,
         )
     for survivor in living:
         if survivor.energy <= 0:
-            _die(world, day, survivor, "daily_energy_depleted")
+            _die(
+                world,
+                cycle,
+                world.config.slots_per_cycle,
+                survivor,
+                "cycle_energy_depleted",
+            )
 
 
-def _daily_cost(config: SurvivalConfig, survivor: Survivor) -> int:
+def _cycle_cost(config: SurvivalConfig, survivor: Survivor) -> int:
     discount = config.shelter_energy_discount if survivor.shelter else 0
     return max(1, config.daily_energy_cost - discount)
 
 
-def _regenerate_resources(world: SurvivalWorld, day: int) -> None:
+def _regenerate_resources(world: SurvivalWorld, cycle: int) -> None:
     world.resources.food = min(
         world.resources.food_capacity,
         world.resources.food + world.config.food_regeneration,
@@ -568,54 +829,94 @@ def _regenerate_resources(world: SurvivalWorld, day: int) -> None:
         world.resources.wood + world.config.wood_regeneration,
     )
     _emit(
-        world, day, "resources_regenerated", None, resources=world.resources.to_dict()
+        world,
+        cycle,
+        world.config.slots_per_cycle,
+        "resources_regenerated",
+        None,
+        resources=world.resources.to_dict(),
     )
 
 
-def _die(world: SurvivalWorld, day: int, survivor: Survivor, cause: str) -> None:
+def _die(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    survivor: Survivor,
+    cause: str,
+) -> None:
     if not survivor.alive:
         return
     survivor.alive = False
+    survivor.resting = True
     survivor.energy = 0
-    survivor.died_on_day = day
-    _emit(world, day, "survivor_died", survivor.name, cause=cause)
+    survivor.died_on_day = cycle
+    _emit(world, cycle, slot, "survivor_died", survivor.name, cause=cause)
 
 
-def _finalize_survival(world: SurvivalWorld, day: int) -> None:
+def _finalize_survival(world: SurvivalWorld, cycle: int) -> None:
     if not world.alive_names():
         world.finished_reason = "everyone_died"
-    elif day >= world.config.max_days:
-        world.finished_reason = "day_limit_reached"
+    elif cycle >= world.config.max_days:
+        world.finished_reason = "cycle_limit_reached"
     if world.finished_reason is not None:
-        _emit(world, day, "world_finished", None, reason=world.finished_reason)
+        _emit(
+            world,
+            cycle,
+            world.config.slots_per_cycle,
+            "world_finished",
+            None,
+            reason=world.finished_reason,
+        )
+
+
+def _awake_by_seat(world: SurvivalWorld) -> list[Survivor]:
+    return [survivor for survivor in world.living_by_seat() if not survivor.resting]
+
+
+def _ordered_view_survivors(
+    world: SurvivalWorld, views: Mapping[str, SurvivorView]
+) -> list[Survivor]:
+    return [
+        survivor
+        for survivor in world.living_by_seat()
+        if survivor.name in views
+    ]
 
 
 def _resolution_order(
     world: SurvivalWorld,
-    day: int,
+    cycle: int,
+    slot: int,
     survivors: Sequence[Survivor],
     namespace: str,
 ) -> list[Survivor]:
     order = list(sorted(survivors, key=lambda survivor: survivor.seat_id))
-    random.Random(_stable_int(f"order:{namespace}:{world.seed}:{day}")).shuffle(order)
+    random.Random(
+        _stable_int(f"order:{namespace}:{world.seed}:{cycle}:{slot}")
+    ).shuffle(order)
     return order
 
 
 def _stable_range(
     seed: int,
-    day: int,
+    cycle: int,
+    slot: int,
     opaque_id: str,
     namespace: str,
     minimum: int,
     maximum: int,
 ) -> int:
     return minimum + (
-        _stable_int(f"{namespace}:{seed}:{day}:{opaque_id}") % (maximum - minimum + 1)
+        _stable_int(f"{namespace}:{seed}:{cycle}:{slot}:{opaque_id}")
+        % (maximum - minimum + 1)
     )
 
 
 def _stable_int(value: str) -> int:
-    return int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest()[:8], "big")
+    return int.from_bytes(
+        hashlib.sha256(value.encode("utf-8")).digest()[:8], "big"
+    )
 
 
 def _view_sha256(view: SurvivorView) -> str:
@@ -646,6 +947,8 @@ def _choice_tape(events: Sequence[SurvivalEvent]) -> tuple[dict[str, Any], ...]:
     return tuple(
         {
             "day": event.day,
+            "cycle": event.day,
+            "slot": event.slot,
             "actor": event.actor,
             "view_sha256": event.detail["view_sha256"],
             "raw_choice": event.detail["raw_choice"],
@@ -669,9 +972,15 @@ def _world_from_snapshot(
             food=int(item["food"]),
             wood=int(item["wood"]),
             shelter=bool(item["shelter"]),
+            resting=bool(item.get("resting", False)),
+            last_observed_event_sequence=int(
+                item.get("last_observed_event_sequence", event_sequence_offset)
+            ),
             alive=bool(item["alive"]),
             died_on_day=(
-                int(item["died_on_day"]) if item["died_on_day"] is not None else None
+                int(item["died_on_day"])
+                if item["died_on_day"] is not None
+                else None
             ),
         )
         for item in snapshot["survivors"]
@@ -680,13 +989,36 @@ def _world_from_snapshot(
     messages = [
         SpokenMessage(
             message_id=str(item["id"]),
-            day=int(item["day"]),
+            sequence=int(item.get("sequence", 0)),
+            cycle=_strict_cycle_alias(item, context="message"),
+            slot=int(item.get("slot", 1)),
             speaker=str(item["speaker"]),
             recipient=str(item["recipient"]),
             text=str(item["text"]),
         )
         for item in snapshot["messages"]
     ]
+    observation_history = snapshot.get("observation_history")
+    events = (
+        [
+            SurvivalEvent(
+                sequence=int(item["sequence"]),
+                day=_strict_cycle_alias(item, context="observation event"),
+                slot=int(item.get("slot", 0)),
+                kind=str(item["kind"]),
+                actor=(str(item["actor"]) if item["actor"] is not None else None),
+                detail=dict(item["detail"]),
+            )
+            for item in observation_history
+        ]
+        if isinstance(observation_history, list)
+        else []
+    )
+    snapshot_event_offset = (
+        int(snapshot.get("event_sequence_offset", 0))
+        if observation_history is not None
+        else event_sequence_offset
+    )
     return SurvivalWorld(
         config=config,
         seed=int(snapshot["seed"]),
@@ -697,9 +1029,11 @@ def _world_from_snapshot(
             wood=int(resources_data["wood"]),
             wood_capacity=int(resources_data["wood_capacity"]),
         ),
-        day=int(snapshot["day"]),
+        day=_strict_cycle_alias(snapshot, context="world snapshot"),
+        slot=int(snapshot.get("slot", 0)),
         messages=messages,
-        event_sequence_offset=event_sequence_offset,
+        events=events,
+        event_sequence_offset=snapshot_event_offset,
         finished_reason=(
             str(snapshot["finished_reason"])
             if snapshot["finished_reason"] is not None
@@ -709,18 +1043,47 @@ def _world_from_snapshot(
 
 
 def _reject_resolution(
-    world: SurvivalWorld, day: int, survivor: Survivor, reason: str
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    survivor: Survivor,
+    reason: str,
 ) -> None:
-    _emit(world, day, "action_resolution_rejected", survivor.name, reason=reason)
+    _emit(
+        world,
+        cycle,
+        slot,
+        "action_resolution_rejected",
+        survivor.name,
+        reason=reason,
+    )
+
+
+def _strict_cycle_alias(value: Mapping[str, Any], *, context: str) -> int:
+    if "day" not in value and "cycle" not in value:
+        raise ValueError(f"{context} has no cycle")
+    if "day" in value and "cycle" in value:
+        day = int(value["day"])
+        cycle = int(value["cycle"])
+        if day != cycle:
+            raise ValueError(f"{context} day and cycle aliases disagree")
+        return cycle
+    return int(value["cycle"] if "cycle" in value else value["day"])
 
 
 def _emit(
-    world: SurvivalWorld, day: int, kind: str, actor: str | None, **detail: Any
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    kind: str,
+    actor: str | None,
+    **detail: Any,
 ) -> None:
     world.events.append(
         SurvivalEvent(
             sequence=world.event_sequence_offset + len(world.events) + 1,
-            day=day,
+            day=cycle,
+            slot=slot,
             kind=kind,
             actor=actor,
             detail=detail,
@@ -728,5 +1091,96 @@ def _emit(
     )
 
 
-def _snapshot(world: SurvivalWorld) -> dict[str, Any]:
-    return world.to_dict(include_events=False)
+def _event_for_view(
+    event: SurvivalEvent, viewer: str
+) -> dict[str, Any] | None:
+    if event.kind in {
+        "cycle_started",
+        "slot_started",
+        "choice_submitted",
+        "speech_sent",
+        "world_finished",
+    }:
+        return None
+    if event.actor == viewer:
+        return event.to_dict()
+    if event.kind == "resource_given" and event.detail.get("target") == viewer:
+        return event.to_dict()
+    if event.kind in {
+        "action_rejected",
+        "speech_rejected",
+        "action_resolution_rejected",
+        "choice_energy_paid",
+        "food_foraged",
+        "wood_gathered",
+        "food_eaten",
+        "resource_given",
+        "cycle_energy_paid",
+        "deadline_choice_cancelled",
+    }:
+        return None
+    if event.kind in {
+        "rest_started",
+        "shelter_built",
+        "forced_collapse",
+        "survivor_died",
+        "resources_regenerated",
+    }:
+        rendered = event.to_dict()
+        rendered["detail"] = {}
+        return rendered
+    return None
+
+
+def _bounded_recent_events(
+    events: Sequence[SurvivalEvent],
+    *,
+    viewer: str,
+    after_sequence: int,
+    limit: int,
+) -> tuple[dict[str, Any], ...]:
+    projected = [
+        (event, rendered)
+        for event in events
+        if event.sequence > after_sequence
+        and (rendered := _event_for_view(event, viewer)) is not None
+    ]
+    if len(projected) <= limit:
+        return tuple(rendered for _, rendered in projected)
+    own = [pair for pair in projected if pair[0].actor == viewer]
+    selected = own[-limit:]
+    selected_sequences = {event.sequence for event, _ in selected}
+    remaining = limit - len(selected)
+    if remaining > 0:
+        public = [
+            pair for pair in projected if pair[0].sequence not in selected_sequences
+        ]
+        selected.extend(public[-remaining:])
+    selected.sort(key=lambda pair: pair[0].sequence)
+    return tuple(rendered for _, rendered in selected)
+
+
+def _result_from(
+    world: SurvivalWorld,
+    initial_state: dict[str, Any],
+    event_start: int,
+) -> SurvivalResult:
+    return SurvivalResult(
+        initial_state=initial_state,
+        final_state=_snapshot(world),
+        events=tuple(event.to_dict() for event in world.events[event_start:]),
+        choice_tape=_choice_tape(world.events[event_start:]),
+        event_sequence_base=world.event_sequence_offset + event_start,
+    )
+
+
+def _snapshot(
+    world: SurvivalWorld, *, include_observation_history: bool = False
+) -> dict[str, Any]:
+    snapshot = world.to_dict(include_events=False)
+    if include_observation_history:
+        snapshot["event_sequence_offset"] = world.event_sequence_offset
+        snapshot["observation_history"] = [
+            event.to_dict() for event in world.events
+        ]
+    return snapshot

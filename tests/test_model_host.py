@@ -15,8 +15,13 @@ from world_sim.model_host import (
     load_opencode_go_api_key,
     run_live_survival,
 )
-from world_sim.survival.engine import replay_survival
+from world_sim.survival.engine import (
+    make_survival_world,
+    replay_survival,
+    survival_view_for,
+)
 from world_sim.survival.models import SurvivalResult
+from world_sim.survival.prompt import response_schema
 
 
 def response(
@@ -149,7 +154,7 @@ class ModelHostTests(unittest.TestCase):
         self.assertNotIn(secret, json.dumps(artifact))
 
     def test_two_models_complete_three_days_and_replay_without_calls(self) -> None:
-        raw = '{"action":{"kind":"forage"},"say":null}'
+        raw = '{"action":{"kind":"rest"},"say":null}'
         transport = FakeTransport(
             [response(raw, request_id=f"request-{index}") for index in range(6)]
         )
@@ -230,6 +235,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["format_version"], 2)
         self.assertEqual(len(transport.requests), 4)
         self.assertEqual(artifact["config"]["max_paid_usd"], "0.05")
         self.assertLessEqual(
@@ -339,7 +345,35 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertNotIn("temperature", kimi)
         self.assertEqual(glm["thinking"], {"type": "disabled"})
+        self.assertEqual(glm["response_format"], {"type": "json_object"})
         self.assertNotIn("reasoning_effort", glm)
+
+        public_names = ("Aster", "Birch", "Cinder", "Lumen")
+        world = make_survival_world(public_names, seed=17)
+        marker = "response JSON schema (your response must validate exactly):\n"
+        for request, public_name, model in zip(
+            transport.requests, public_names, models, strict=True
+        ):
+            body = request["body"]
+            messages = body["messages"]
+            self.assertEqual(len(messages), 2)
+            user_prompt = messages[1]["content"]
+            self.assertEqual(user_prompt.count(marker), 1)
+            rendered_schema = json.loads(user_prompt.split(marker, 1)[1])
+            expected_schema = response_schema(
+                survival_view_for(world, public_name)
+            )
+            self.assertEqual(rendered_schema, expected_schema)
+            self.assertEqual(
+                rendered_schema["properties"]["action"]["oneOf"][2],
+                {
+                    "type": "object",
+                    "properties": {"kind": {"const": "gather_wood"}},
+                    "required": ["kind"],
+                    "additionalProperties": False,
+                },
+            )
+            self.assertNotIn(model, json.dumps(messages))
 
     def test_paid_provider_default_omits_reasoning_controls(self) -> None:
         models = (
@@ -390,7 +424,7 @@ class ModelHostTests(unittest.TestCase):
 
     def test_paid_multiday_run_is_rejected_before_transport(self) -> None:
         transport = FakeTransport([])
-        with self.assertRaisesRegex(ValueError, "require exactly one day"):
+        with self.assertRaisesRegex(ValueError, "require exactly one cycle"):
             run_live_survival(
                 model_refs=(
                     "opencode-paid/deepseek-v4-flash",
@@ -418,7 +452,7 @@ class ModelHostTests(unittest.TestCase):
             ),
             (
                 {"max_paid_usd": "0.05", "days": 3, "max_calls": 6},
-                "require exactly one day",
+                "require exactly one cycle",
             ),
             (
                 {"max_paid_usd": "0.000001"},
@@ -597,28 +631,33 @@ class ModelHostTests(unittest.TestCase):
             )
         self.assertEqual(transport.requests, [])
 
-    def test_bad_model_json_is_one_paid_rest_without_retry(self) -> None:
+    def test_bad_model_json_wastes_one_slot_without_a_repair_retry(self) -> None:
         transport = FakeTransport(
             [
                 response("not json"),
+                response('{"action":{"kind":"rest"},"say":null}'),
                 response('{"action":{"kind":"rest"},"say":null}'),
             ]
         )
         artifact = run_live_survival(
             model_refs=("opencode/alpha-free", "opencode/beta-free"),
             days=1,
-            max_calls=2,
+            max_calls=3,
             transport=transport,
             environ={},
         )
 
         malformed = artifact["calls"][0]
-        self.assertEqual(len(transport.requests), 2)
+        self.assertEqual(len(transport.requests), 3)
         self.assertEqual(malformed["response"]["model_reply"], "not json")
         self.assertIn("not valid strict JSON", malformed["validation"]["action_error"])
-        self.assertEqual(malformed["parsed_choice"], {"action": {"kind": "rest"}, "say": None})
+        self.assertEqual(
+            malformed["parsed_choice"],
+            {"action": {"kind": "invalid"}, "say": None},
+        )
         aster = artifact["result"]["final_state"]["survivors"][0]
-        self.assertEqual(aster["energy"], 13)
+        self.assertEqual(aster["energy"], 14)
+        self.assertEqual(artifact["calls"][2]["slot"], 2)
 
     def test_provider_failures_stop_before_world_mutation_and_keep_receipts(self) -> None:
         cases = (
@@ -654,6 +693,8 @@ class ModelHostTests(unittest.TestCase):
                 )
                 self.assertEqual(artifact["status"], "failed")
                 self.assertEqual(artifact["failure"]["kind"], expected_kind)
+                self.assertEqual(artifact["failure"]["cycle"], 1)
+                self.assertEqual(artifact["failure"]["slot"], 1)
                 self.assertEqual(artifact["partial_state"]["day"], 0)
                 receipt = artifact["calls"][0]["response"]
                 self.assertNotIn("raw_body", receipt)
@@ -663,7 +704,7 @@ class ModelHostTests(unittest.TestCase):
 
     def test_call_cap_fails_before_credentials_or_transport(self) -> None:
         transport = FakeTransport([])
-        with self.assertRaisesRegex(ValueError, "could require 6 model calls"):
+        with self.assertRaisesRegex(ValueError, "requires at least 6 model calls"):
             run_live_survival(
                 model_refs=("opencode-go/alpha", "opencode-go/beta"),
                 days=3,
@@ -673,6 +714,23 @@ class ModelHostTests(unittest.TestCase):
                 environ={},
             )
         self.assertEqual(transport.requests, [])
+
+    def test_runtime_call_cap_stops_before_an_extra_request(self) -> None:
+        raw = '{"action":{"kind":"forage"},"say":null}'
+        transport = FakeTransport([response(raw), response(raw)])
+
+        artifact = run_live_survival(
+            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            days=1,
+            max_calls=2,
+            transport=transport,
+            environ={},
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "call_cap_reached")
+        self.assertEqual(artifact["failure"]["slot"], 2)
+        self.assertEqual(len(transport.requests), 2)
 
     def test_go_key_loader_prefers_env_and_reads_strict_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

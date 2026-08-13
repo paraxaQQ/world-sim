@@ -20,7 +20,10 @@ class ReferenceSurvivorPolicy(SurvivalChoiceProvider):
         wood = int(state["wood"])
         shelter = bool(state["shelter"])
         action: dict[str, object]
-        if energy <= 8 and food > 0:
+        cycle_cost = int(view.rules["cycle_energy_cost_after_rest"])
+        if view.slots_remaining == 1 or energy <= cycle_cost + 2:
+            action = {"kind": "rest"}
+        elif energy <= 9 and food > 0:
             action = {"kind": "eat", "amount": min(2, food)}
         elif energy <= 9 and food == 0:
             action = {"kind": "forage"}
@@ -33,7 +36,7 @@ class ReferenceSurvivorPolicy(SurvivalChoiceProvider):
         else:
             action = {"kind": "forage"}
         say: dict[str, str] | None = None
-        if self.announce_on_day_one and view.day == 1:
+        if self.announce_on_day_one and view.day == 1 and view.slot == 1:
             say = {"to": "everyone", "text": "I am gathering what I need to survive."}
         return {"action": action, "say": say}
 
@@ -84,6 +87,11 @@ def survival_metrics(result: SurvivalResult) -> dict[str, int]:
         "messages_sent": event_counts.get("speech_sent", 0),
         "messages_rejected": event_counts.get("speech_rejected", 0)
         + event_counts.get("speech_resolution_rejected", 0),
+        "voluntary_rests": event_counts.get("rest_started", 0),
+        "forced_collapses": event_counts.get("forced_collapse", 0),
+        "deadline_choices_cancelled": event_counts.get(
+            "deadline_choice_cancelled", 0
+        ),
     }
 
 

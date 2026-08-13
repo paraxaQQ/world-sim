@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NoReturn, Sequence
 
 
 MODEL_MAX_COMPLETION_TOKENS = 4_096
@@ -42,6 +42,20 @@ class ParsedSurvivalChoice:
         }
 
 
+def _invalid_choice(
+    action_error: str,
+    *,
+    speech: Speech | None = None,
+    speech_error: str | None = None,
+) -> ParsedSurvivalChoice:
+    return ParsedSurvivalChoice(
+        SurvivalAction("invalid", {}),
+        speech,
+        action_error,
+        speech_error,
+    )
+
+
 def allowed_survival_actions(
     *,
     living_peers: Sequence[str],
@@ -71,16 +85,10 @@ def parse_survival_choice(
     max_food_eaten: int,
     max_speech_chars: int,
 ) -> ParsedSurvivalChoice:
-    fallback = SurvivalAction("rest", {})
     if not isinstance(raw_choice, Mapping):
-        return ParsedSurvivalChoice(fallback, None, "choice must be an object", None)
+        return _invalid_choice("choice must be an object")
     if set(raw_choice) != {"action", "say"}:
-        return ParsedSurvivalChoice(
-            fallback,
-            None,
-            "choice must use exactly ['action', 'say']",
-            None,
-        )
+        return _invalid_choice("choice must use exactly ['action', 'say']")
 
     action, action_error = _parse_action(
         raw_choice["action"],
@@ -94,7 +102,7 @@ def parse_survival_choice(
         max_speech_chars=max_speech_chars,
     )
     return ParsedSurvivalChoice(
-        action=action if action is not None else fallback,
+        action=action if action is not None else SurvivalAction("invalid", {}),
         speech=speech,
         action_error=action_error,
         speech_error=speech_error,
@@ -109,25 +117,24 @@ def parse_model_response(
     max_food_eaten: int,
     max_speech_chars: int,
 ) -> ParsedSurvivalChoice:
-    fallback = SurvivalAction("rest", {})
     if not isinstance(raw_response, str):
-        return ParsedSurvivalChoice(fallback, None, "model response must be text", None)
-    if len(raw_response.encode("utf-8")) > MODEL_MAX_RESPONSE_BYTES:
-        return ParsedSurvivalChoice(
-            fallback,
-            None,
-            f"model response exceeds {MODEL_MAX_RESPONSE_BYTES} bytes",
-            None,
+        return _invalid_choice("model response must be text")
+    try:
+        response_bytes = raw_response.encode("utf-8")
+    except UnicodeEncodeError as error:
+        return _invalid_choice(f"model response is not valid UTF-8 text: {error}")
+    if len(response_bytes) > MODEL_MAX_RESPONSE_BYTES:
+        return _invalid_choice(
+            f"model response exceeds {MODEL_MAX_RESPONSE_BYTES} bytes"
         )
     try:
-        raw_choice = json.loads(raw_response, object_pairs_hook=_unique_object)
-    except (json.JSONDecodeError, ValueError) as error:
-        return ParsedSurvivalChoice(
-            fallback,
-            None,
-            f"model response is not valid strict JSON: {error}",
-            None,
+        raw_choice = json.loads(
+            raw_response,
+            object_pairs_hook=_unique_object,
+            parse_constant=_raise_invalid_constant,
         )
+    except (json.JSONDecodeError, ValueError) as error:
+        return _invalid_choice(f"model response is not valid strict JSON: {error}")
     return parse_survival_choice(
         raw_choice,
         actor=actor,
@@ -214,3 +221,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError(f"duplicate object key {key!r}")
         result[key] = value
     return result
+
+
+def _raise_invalid_constant(value: str) -> NoReturn:
+    raise ValueError(f"invalid JSON constant {value!r}")

@@ -1,5 +1,15 @@
 # changelog
 
+## 0.5.0 - 2026-08-13
+
+- replace one-choice days with four-chance cycles: each survivor may act and speak repeatedly, voluntary rest ends its cycle, and missing the final rest deadline cancels the attempted choice and applies exhaustion.
+- deliver messages on the recipient's next active chance, retain unread messages for early sleepers, and expose bounded audience-safe objective outcomes without leaking private inventories or directed speech.
+- make malformed actions waste a chance instead of counting as rest, keep rest free, and make bounded speech free so conversational frequency remains separate from metabolism.
+- add exact multi-slot replay for fresh and continued runs, strict alias and static-input validation, and a hard live-call ledger that blocks an unpriced extra request.
+- add the `lean-camp-v1` ecology candidate and a deterministic calibration instrument with scripted baselines, seat rotations, clustered bootstrap comparisons, fixed gates, and per-seed summaries.
+- require strict JSON-only model replies with the exact response schema in every prompt, including GLM's JSON-object request mode.
+- retain a 5,120-run held-out `lean-camp-v1` confirmation that passes all 21 fixed balance gates without provider calls.
+
 ## 0.4.4 - 2026-08-13
 
 - add `--reasoning-effort compatibility-first` for paid smoke tests and send each allowlisted model its documented `thinking: {"type": "disabled"}` control.

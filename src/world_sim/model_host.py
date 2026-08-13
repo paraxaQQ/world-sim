@@ -109,6 +109,13 @@ class LiveCallFailure(RuntimeError):
     pass
 
 
+class LiveCallCapFailure(RuntimeError):
+    def __init__(self, *, view: SurvivorView, public_name: str) -> None:
+        super().__init__("live model call cap reached before request")
+        self.view = view
+        self.public_name = public_name
+
+
 class StdlibChatTransport:
     def post(
         self,
@@ -124,7 +131,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.4.4",
+            "User-Agent": "world-sim/0.5.0",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -189,11 +196,17 @@ class _LiveProvider(SurvivalChoiceProvider):
     max_completion_tokens: int
     temperature: float
     reasoning_effort: str | None
+    max_calls: int
     calls: list[dict[str, Any]]
 
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
         if view.name != self.assignment.public_name:
             raise RuntimeError("a model provider received the wrong public identity")
+        if len(self.calls) >= self.max_calls:
+            raise LiveCallCapFailure(
+                view=view,
+                public_name=self.assignment.public_name,
+            )
         request = _build_request(
             self.assignment,
             view,
@@ -308,6 +321,8 @@ class _LiveProvider(SurvivalChoiceProvider):
         return {
             "sequence": len(self.calls) + 1,
             "day": view.day,
+            "cycle": view.day,
+            "slot": view.slot,
             "seat_id": self.assignment.seat_id,
             "public_name": self.assignment.public_name,
             "model": self.assignment.model_ref,
@@ -335,6 +350,7 @@ def run_live_survival(
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     assignments = _assign_models(model_refs)
+    world_config = SurvivalConfig(max_days=days)
     _validate_limits(
         len(assignments),
         days,
@@ -362,6 +378,8 @@ def run_live_survival(
         all_assignments=assignments,
         seed=seed,
         days=days,
+        slots_per_cycle=world_config.slots_per_cycle,
+        max_calls=max_calls,
         max_completion_tokens=max_completion_tokens,
         temperature=temperature,
         reasoning_effort=(
@@ -396,6 +414,7 @@ def run_live_survival(
             reasoning_effort=(
                 None if reasoning_effort == "provider-default" else reasoning_effort
             ),
+            max_calls=max_calls,
             calls=calls,
         )
         for assignment in assignments
@@ -403,15 +422,17 @@ def run_live_survival(
     world = make_survival_world(
         tuple(assignment.public_name for assignment in assignments),
         seed=seed,
-        config=SurvivalConfig(max_days=days),
+        config=world_config,
     )
     base = {
-        "format_version": 1,
+        "format_version": 2,
         "mode": "live_named_survival",
         "adapter": ADAPTER_NAME,
         "config": {
             "seed": seed,
             "days_requested": days,
+            "cycles_requested": days,
+            "slots_per_cycle": world_config.slots_per_cycle,
             "max_calls": max_calls,
             "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
@@ -427,6 +448,27 @@ def run_live_survival(
     try:
         result = run_survival(world, providers, days=days)
     except RuntimeError as error:
+        if isinstance(error.__cause__, LiveCallCapFailure):
+            failure = error.__cause__
+            return {
+                **base,
+                "status": "failed",
+                "failure": {
+                    "call_sequence": None,
+                    "day": failure.view.day,
+                    "cycle": failure.view.day,
+                    "slot": failure.view.slot,
+                    "seat_id": world.survivors[failure.public_name].seat_id,
+                    "public_name": failure.public_name,
+                    "model": providers[failure.public_name].assignment.model_ref,
+                    "kind": "call_cap_reached",
+                    "message": str(failure),
+                    "http_status": None,
+                },
+                "initial_state": initial_state,
+                "partial_state": world.to_dict(),
+                "provider_summary": _provider_summary(calls),
+            }
         if not isinstance(error.__cause__, LiveCallFailure):
             raise
         failed = calls[-1]
@@ -436,6 +478,8 @@ def run_live_survival(
             "failure": {
                 "call_sequence": failed["sequence"],
                 "day": failed["day"],
+                "cycle": failed["cycle"],
+                "slot": failed["slot"],
                 "seat_id": failed["seat_id"],
                 "public_name": failed["public_name"],
                 "model": failed["model"],
@@ -554,6 +598,8 @@ def _paid_preflight(
     all_assignments: Sequence[_Assignment],
     seed: int,
     days: int,
+    slots_per_cycle: int,
+    max_calls: int,
     max_completion_tokens: int,
     temperature: float,
     reasoning_effort: str | None,
@@ -572,9 +618,12 @@ def _paid_preflight(
     if len(assignments) != len(all_assignments):
         raise ValueError("paid and non-paid models cannot be mixed in one run")
     if days != 1:
-        raise ValueError("paid Zen smoke runs require exactly one day")
-    if len(assignments) * days > 4:
-        raise ValueError("paid Zen smoke runs are limited to four calls")
+        raise ValueError("paid Zen smoke runs require exactly one cycle")
+    if max_calls != len(assignments):
+        raise ValueError(
+            "paid Zen smoke runs require --max-calls equal to the population"
+        )
+    world_max_calls = len(assignments) * days * slots_per_cycle
     names = tuple(assignment.public_name for assignment in all_assignments)
     world = make_survival_world(
         names,
@@ -609,7 +658,8 @@ def _paid_preflight(
             Decimal(input_token_bound) * provider.input_per_million_usd
             + Decimal(max_completion_tokens) * provider.output_per_million_usd
         ) / USD_PER_MILLION_TOKENS * PAID_ZEN_PRICE_SAFETY_FACTOR
-        total += call_bound
+        model_total = call_bound
+        total += model_total
         rows.append(
             {
                 "model": assignment.model_ref,
@@ -623,6 +673,8 @@ def _paid_preflight(
                     provider.output_per_million_usd
                 ),
                 "cost_bound_usd": _decimal_text(call_bound),
+                "potential_calls": 1,
+                "model_cost_bound_usd": _decimal_text(model_total),
             }
         )
     if total > limit:
@@ -635,6 +687,8 @@ def _paid_preflight(
         "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
         "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
         "calls": rows,
+        "authorized_calls": max_calls,
+        "world_max_calls": world_max_calls,
         "total_cost_bound_usd": _decimal_text(total),
     }
 
@@ -676,10 +730,11 @@ def _validate_limits(
     timeout_seconds: float,
 ) -> None:
     if days < 1:
-        raise ValueError("days must be positive")
-    if population * days > max_calls:
+        raise ValueError("cycles must be positive")
+    minimum_calls = population * days
+    if minimum_calls > max_calls:
         raise ValueError(
-            f"this run could require {population * days} model calls, "
+            f"this run requires at least {minimum_calls} model calls, "
             f"above --max-calls {max_calls}"
         )
     if not 1 <= max_completion_tokens <= MODEL_MAX_COMPLETION_TOKENS:

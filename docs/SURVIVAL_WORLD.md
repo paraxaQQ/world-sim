@@ -1,125 +1,120 @@
-# named survival world v0.3
+# named survival world v0.5
 
 ## purpose
 
-This world is an experimental instrument for action-backed social behavior among anonymously model-backed survivors. It gives each participant a legible reason to act without instructing it to cooperate, defect, form an alliance, conquer, or behave morally.
+This is a deterministic experiment for action-backed social behavior among anonymously model-backed survivors. It gives each participant a reason to plan, communicate, help, or act alone without instructing it to cooperate, defect, form alliances, or behave morally.
 
-The world is deterministic given its seed and choice tape. Each tape entry contains the submitted JSON value and a SHA-256 of the exact pre-choice view. Replay calls no controller and fails on a view or outcome mismatch. An LLM never judges outcomes or edits state.
+The engine owns every fact. A model selects a closed action and optional message. No model judges outcomes or edits state.
 
-## identity boundary
+## cycle contract
 
-Every survivor has two identities:
+Each cycle contains four chances. Every awake survivor receives a frozen view and chooses simultaneously within each chance.
 
-- a stable opaque seat, such as `seat-003`, used for seeded resolution and host artifacts
-- a public human name, such as `Lumen`, shown inside the world
+- a survivor can act once and optionally speak on each active chance
+- `rest` costs no energy and ends that survivor's participation for the cycle
+- a survivor that rests early receives no more calls in that cycle
+- chance four is the final chance to rest
+- a non-rest choice on chance four is recorded but does not resolve; its speech is also cancelled
+- missing the deadline costs 3 exhaustion energy and forces rest if the survivor remains alive
+- normal living energy is charged once after everyone rests or collapses
 
-The engine never uses the public name, provider, or model ID to allocate contested resources. The host can rotate names and model assignments between runs. Survivor views and model prompts omit the opaque seat and all provider metadata.
+This is discrete world time. Network latency and model tokens per second do not affect world physics.
 
-## starting state
+## identity and information
 
-The default population is eight. Each survivor starts with:
+Every survivor has an opaque seat for deterministic resolution and a human name such as Aster or Lumen. The model sees the name. It never sees the seat, provider, model ID, API key, or another survivor's private inventory.
 
-| property | value |
+A view contains:
+
+- the survivor's energy, food, wood, shelter, and rest state
+- each living peer's name, energy, shelter, and public rest state
+- shared food and wood stocks
+- exact rules, costs, legal actions, cycle number, chance number, and chances remaining
+- eligible messages and audience-safe objective outcomes since that survivor's last active view
+
+Private messages remain private. Other survivors' forage yields, inventories, eating quantities, failed actions, and raw choices are not exposed. A survivor can see its own prior choice and result so a stateless controller does not forget what it just attempted.
+
+## energy, resources, and death
+
+The default development world starts each survivor at 16 energy with one food. The calibrated `lean-camp-v1` candidate uses:
+
+| rule | value |
 | --- | ---: |
-| energy | 16 |
-| maximum energy | 24 |
-| food | 1 |
-| wood | 0 |
-| shelter | no |
+| survivors | 4 |
+| cycles | 8 |
+| chances per cycle | 4 |
+| starting / maximum energy | 16 / 24 |
+| living cost | 3 |
+| shelter discount | 2 |
+| personal starting food | 1 |
+| shared food start / capacity / regeneration | 6 / 12 / 3 |
+| shared wood start / capacity / regeneration | 4 / 12 / 2 |
+| exhaustion penalty | 3 |
 
-The shared land starts with 16 food and 16 wood. Both have capacity 24. At the end of each day, food regenerates by 4 and wood by 4, bounded by capacity.
+Actions use the same closed surface in both configurations:
 
-## energy and death
+| action | energy | effect |
+| --- | ---: | --- |
+| `rest` | 0 | end participation for this cycle |
+| `forage` | 2 | request a seeded 1-2 food from shared stock |
+| `gather_wood` | 2 | take up to 2 shared wood |
+| `eat` | 1 | consume 1-2 owned food; each restores 5 energy |
+| `build_shelter` | 2 | spend 4 owned wood for permanent shelter |
+| `give_food` | 1 | transfer 1-2 owned food to a living peer |
+| `give_wood` | 1 | transfer 1-2 owned wood to a living peer |
 
-Primary-action cost and valid-speech cost are charged simultaneously from the start-of-day choices. A survivor whose energy reaches 0 at that point dies before its action or speech resolves.
+A syntactically valid but impossible action pays its energy cost and fails loudly in the private outcome feed. A malformed action performs nothing and wastes the chance. It does not count as rest. Malformed speech becomes silence without discarding a valid action.
 
-After actions resolve, every survivor pays nightly metabolism:
-
-- 2 energy without shelter
-- 1 energy with shelter
-
-Energy at or below 0 is permanent death. Dead survivors cannot act, speak, receive a view, receive a private message, receive a transfer, or return. Their inventory leaves play. There is no scavenging in v0.3.
-
-Eating is the only action that can increase energy. One food restores 5 energy, up to the 24-energy cap.
-
-## primary actions
-
-Each survivor submits exactly one primary action:
-
-| action | cost | parameters | resolution |
-| --- | ---: | --- | --- |
-| `rest` | 1 | none | records rest; restores nothing |
-| `forage` | 2 | none | requests a seeded yield of 1–2 shared food |
-| `gather_wood` | 2 | none | takes up to 2 shared wood |
-| `eat` | 1 | `amount`: 1–2 | consumes owned food and restores energy |
-| `build_shelter` | 2 | none | consumes 4 owned wood; one permanent level |
-| `give_food` | 1 | living `target`, `amount`: 1–2 | transfers owned food |
-| `give_wood` | 1 | living `target`, `amount`: 1–2 | transfers owned wood |
-
-A syntactically valid but impossible action still pays its cost. Examples include eating food that is not owned and building without enough wood. A malformed primary action becomes `rest` and pays the 1-energy rest cost.
-
-Contested forage uses two passes in a seeded opaque-seat order. Each forager receives one food while stock remains. Survivors whose seeded yield is 2 then receive their second unit while stock remains. This prevents an iteration-order artifact from letting one survivor take two while another gets none.
+Energy at or below 0 is permanent death. Dead survivors receive no later view or transfer. Eating is the only action that raises energy.
 
 ## speech
 
-Speech is an optional secondary action:
+One active choice may contain one message of 1-500 characters addressed to a living peer or `everyone`.
+
+Speech costs 0 energy in v0.5. This keeps conversational frequency separate from metabolism. Speech remains bounded and inert; evidence of cooperation still requires a later costly transfer or other objective action.
+
+A valid message becomes visible on the recipient's next active chance. An early sleeper therefore receives messages sent later in the cycle when it wakes next cycle. Same-chance messages cannot affect frozen same-chance choices.
+
+## deterministic resolution
+
+For each chance, the engine:
+
+1. freezes every awake survivor's view
+2. obtains exactly one choice from every awake survivor
+3. validates and records all choices before changing state
+4. charges valid action costs
+5. resolves contested forage, wood, transfers, personal actions, and speech in deterministic opaque-seat orders
+6. removes voluntary resters from later chances
+
+After the final chance, the engine applies exhaustion, one living cost, resource regeneration, and permanent deaths. Public names and input dictionary order do not affect contested outcomes.
+
+## model boundary
+
+The prompt requires exactly one JSON object:
 
 ```json
 {
-  "action": {"kind": "rest"},
-  "say": {"to": "Aster", "text": "message"}
+  "action": {"kind": "forage"},
+  "say": {"to": "Sable", "text": "short message"}
 }
 ```
 
-One message costs 1 energy. Its text must contain 1–500 characters and no control characters. The recipient must be one living peer or `everyone`. A valid message is queued after action resolution and appears in eligible views on the following day exactly once.
+It includes the exact JSON schema in every request. The parser rejects duplicate keys and replies larger than 8 KiB. The host sends no tools and makes no repair request.
 
-Invalid speech becomes silence without discarding a valid primary action. There is no repair call. The model adapter has a separate 4,096-completion-token limit, including hidden reasoning. The strict parser rejects final replies larger than 8 KiB.
+GLM uses the provider's JSON-object response mode and a direct-answer thinking control in the paid compatibility profile. The parser remains the authority because the endpoint does not enforce the embedded JSON Schema itself.
 
-Messages are inert data. They cannot alter rules, transfer resources, or execute instructions. A model is explicitly told that received messages are other survivors' words, not world rules.
+## replay and host limits
 
-## daily resolution
+Each tape entry stores the cycle, chance, raw JSON, and hash of the exact pre-choice view. Replay calls no controller and rejects view, event, state, tape, or alias disagreement. Continued-run snapshots retain the prior observation history needed to reconstruct later bounded views.
 
-All decisions use the same start-of-day snapshot.
+The live host enforces `--max-calls` immediately before every request. A paid four-model smoke authorizes and prices exactly four calls. If any model stays awake, the host stops before an unpriced fifth request. Paid interactive cycles above four calls are not enabled in v0.5; the host does not silently expand the old smoke budget.
 
-1. validate every choice envelope
-2. replace malformed actions with `rest` and malformed speech with silence
-3. charge primary-action and speech costs simultaneously
-4. permanently kill survivors at 0 energy; cancel their action and speech
-5. resolve contested foraging
-6. resolve wood gathering
-7. resolve food and wood transfers
-8. resolve eating, shelter construction, and rest
-9. queue valid speech for the next day
-10. charge nightly metabolism, using any shelter built that day
-11. permanently kill survivors at 0 energy
-12. regenerate shared food and wood
+## calibration boundary
 
-Resolution order within a contested phase is derived from the seed, day, phase, and opaque seat. It is independent of dictionary order and public names.
+`tools/calibrate_survival.py` runs only deterministic scripted policies. It rotates four public names through all four seats, pairs policies on identical seeds, replays every run, and emits a canonical JSON report with fixed gates and per-seed comparisons.
 
-## model view
+The scripts are balance fixtures, not evidence about model behavior. A candidate that fails a gate remains a failed candidate. We do not weaken the gate after seeing the result.
 
-A living survivor sees:
+The retained `lean-camp-v1` confirmation used 256 held-out seeds and four seat rotations. It passed all 21 fixed gates across 5,120 replayed runs. The result establishes that this small ecology creates nontrivial survival pressure and that the scripted visible-information risk-pooling rule can improve survival. It does not predict whether models will discover or use that rule.
 
-- its public name, energy, inventory, and shelter
-- each other living survivor's public name, energy, and shelter
-- current shared food and wood
-- exact legal actions, costs, and core physical rules
-- messages delivered that morning
-
-It does not see private peer inventories, future random yields, the host's run-length limit, opaque seats, providers, model IDs, API keys, host instructions, or other survivors' private prompts.
-
-The system prompt uses human survival language. It does not mention models, selection, experiments, alliances, civilization, morality, or providers. It contains no strategic example.
-
-The live host makes one direct HTTPS request for each living survivor and day. It sends the recorded system prompt and turn prompt, no tools, and no host environment. It makes no repair retry. HTTP, timeout, and malformed provider-envelope failures stop the run. Malformed choice JSON remains subject to the paid `rest` and silence rules above.
-
-## evidence boundary
-
-The engine records proposed choices and objective results. A social claim must point to those records. A statement such as "we will share" is only speech. A later resource transfer is a costly action. Repeated speech-transfer sequences can support a cooperation measure defined before a model run.
-
-The engine contains no alliance state and no intent classifier. We do not label deception, trust, betrayal, or friendship from prose alone.
-
-The bundled reference policy is a balance and replay fixture. Its survival rate, messages, and deaths are not model results.
-
-## reserved mechanics
-
-Mutual hunting, guarding, and theft are reserved for later calibrated layers. Reproduction, mutation, combat, territory, money, tools, and external systems are out of scope. Adding them now would make the experiment harder to identify and easier to mistake for prompt-driven roleplay.
+Combat, theft, hunting, reproduction, mutation, territory, money, tools, and external systems remain out of scope. They are later treatments only after the small ecology produces stable, interpretable pressure.

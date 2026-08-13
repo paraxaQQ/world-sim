@@ -4,6 +4,7 @@ from .engine import (
     make_survival_world,
     replay_survival,
     run_survival,
+    run_survival_cycle,
     run_survival_day,
     survival_view_for,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "make_survival_world",
     "replay_survival",
     "run_survival",
+    "run_survival_cycle",
     "run_survival_day",
     "survival_view_for",
 ]

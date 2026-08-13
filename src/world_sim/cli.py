@@ -32,7 +32,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the deterministic named-survivor reference population",
     )
     survive.add_argument("--seed", type=int, default=17)
-    survive.add_argument("--days", type=int, default=10)
+    survive.add_argument("--cycles", "--days", dest="cycles", type=int, default=8)
     survive.add_argument(
         "--population",
         type=int,
@@ -55,7 +55,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="assign one model to the next hidden seat; repeat 2-8 times",
     )
     survive_live.add_argument("--seed", type=int, default=17)
-    survive_live.add_argument("--days", type=int, default=3)
+    survive_live.add_argument(
+        "--cycles", "--days", dest="cycles", type=int, default=1
+    )
     survive_live.add_argument("--max-calls", type=int, default=DEFAULT_LIVE_MAX_CALLS)
     survive_live.add_argument("--max-completion-tokens", type=int, default=4096)
     survive_live.add_argument(
@@ -111,12 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     exit_code = 0
     if args.command == "survive":
         names = DEFAULT_SURVIVOR_NAMES[: args.population]
-        result = run_survival_demo(seed=args.seed, days=args.days, names=names)
+        result = run_survival_demo(seed=args.seed, days=args.cycles, names=names)
         payload = result.to_dict()
         summary = {
             "mode": "named_survival_reference",
             "seed": args.seed,
-            "days_completed": payload["final_state"]["day"],
+            "cycles_completed": payload["final_state"]["cycle"],
             "finished_reason": payload["final_state"]["finished_reason"],
             "canonical_sha256": result_sha256(result),
             "metrics": survival_metrics(result),
@@ -126,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = run_live_survival(
                 model_refs=args.models,
                 seed=args.seed,
-                days=args.days,
+                days=args.cycles,
                 max_calls=args.max_calls,
                 max_completion_tokens=args.max_completion_tokens,
                 temperature=args.temperature,
@@ -142,7 +144,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "mode": payload["mode"],
                 "status": payload["status"],
                 "seed": args.seed,
-                "days_completed": result_payload["final_state"]["day"],
+                "cycles_completed": result_payload["final_state"]["cycle"],
                 "finished_reason": result_payload["final_state"]["finished_reason"],
                 "canonical_sha256": payload["canonical_result_sha256"],
                 "metrics": payload["metrics"],
@@ -154,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "mode": payload["mode"],
                 "status": payload["status"],
                 "seed": args.seed,
-                "days_completed": payload["partial_state"]["day"],
+                "cycles_completed": payload["partial_state"]["cycle"],
                 "failure": payload["failure"],
                 "provider_summary": payload["provider_summary"],
             }
@@ -321,13 +323,16 @@ def _print_live_call(record: Mapping[str, Any]) -> None:
     if record["status"] == "failed":
         error = record["error"]
         print(
-            f"day {record['day']} | {record['public_name']} | "
+            f"cycle {record['cycle']} slot {record['slot']} | {record['public_name']} | "
             f"provider failure: {error['kind']}"
         )
         return
     parsed = record["parsed_choice"]
     action = parsed["action"]
-    line = f"day {record['day']} | {record['public_name']} | {action['kind']}"
+    line = (
+        f"cycle {record['cycle']} slot {record['slot']} | "
+        f"{record['public_name']} | {action['kind']}"
+    )
     speech = parsed["say"]
     if isinstance(speech, Mapping):
         line += f" | to {speech['to']}: {speech['text']}"

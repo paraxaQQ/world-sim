@@ -19,13 +19,15 @@ DEFAULT_SURVIVOR_NAMES: tuple[str, ...] = (
 @dataclass(frozen=True)
 class SurvivalConfig:
     max_days: int = 20
+    slots_per_cycle: int = 4
+    exhaustion_energy_penalty: int = 3
     starting_energy: int = 16
     max_energy: int = 24
     starting_food: int = 1
     starting_wood: int = 0
     daily_energy_cost: int = 2
     shelter_energy_discount: int = 1
-    rest_energy_cost: int = 1
+    rest_energy_cost: int = 0
     forage_energy_cost: int = 2
     forage_min_food: int = 1
     forage_max_food: int = 2
@@ -37,9 +39,10 @@ class SurvivalConfig:
     build_shelter_energy_cost: int = 2
     shelter_wood_cost: int = 4
     give_energy_cost: int = 1
-    speech_energy_cost: int = 1
+    speech_energy_cost: int = 0
     max_speech_chars: int = 500
-    max_inbox_messages: int = 7
+    max_inbox_messages: int = 28
+    max_recent_events: int = 32
     food_starting_stock: int = 16
     food_capacity: int = 24
     food_regeneration: int = 4
@@ -50,10 +53,11 @@ class SurvivalConfig:
     def __post_init__(self) -> None:
         positive_fields = {
             "max_days": self.max_days,
+            "slots_per_cycle": self.slots_per_cycle,
+            "exhaustion_energy_penalty": self.exhaustion_energy_penalty,
             "starting_energy": self.starting_energy,
             "max_energy": self.max_energy,
             "daily_energy_cost": self.daily_energy_cost,
-            "rest_energy_cost": self.rest_energy_cost,
             "forage_energy_cost": self.forage_energy_cost,
             "forage_min_food": self.forage_min_food,
             "forage_max_food": self.forage_max_food,
@@ -65,9 +69,9 @@ class SurvivalConfig:
             "build_shelter_energy_cost": self.build_shelter_energy_cost,
             "shelter_wood_cost": self.shelter_wood_cost,
             "give_energy_cost": self.give_energy_cost,
-            "speech_energy_cost": self.speech_energy_cost,
             "max_speech_chars": self.max_speech_chars,
             "max_inbox_messages": self.max_inbox_messages,
+            "max_recent_events": self.max_recent_events,
             "food_capacity": self.food_capacity,
             "food_regeneration": self.food_regeneration,
             "wood_capacity": self.wood_capacity,
@@ -81,7 +85,9 @@ class SurvivalConfig:
         nonnegative_fields = {
             "starting_food": self.starting_food,
             "starting_wood": self.starting_wood,
+            "rest_energy_cost": self.rest_energy_cost,
             "shelter_energy_discount": self.shelter_energy_discount,
+            "speech_energy_cost": self.speech_energy_cost,
             "food_starting_stock": self.food_starting_stock,
             "wood_starting_stock": self.wood_starting_stock,
         }
@@ -94,6 +100,12 @@ class SurvivalConfig:
             )
         if self.starting_energy > self.max_energy:
             raise ValueError("starting_energy cannot exceed max_energy")
+        if self.slots_per_cycle > 8:
+            raise ValueError("slots_per_cycle cannot exceed 8")
+        if self.rest_energy_cost != 0:
+            raise ValueError("rest_energy_cost must be 0")
+        if self.speech_energy_cost != 0:
+            raise ValueError("speech_energy_cost must be 0")
         if self.shelter_energy_discount >= self.daily_energy_cost:
             raise ValueError(
                 "shelter_energy_discount must be less than daily_energy_cost"
@@ -120,6 +132,8 @@ class SurvivalConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "max_days": self.max_days,
+            "slots_per_cycle": self.slots_per_cycle,
+            "exhaustion_energy_penalty": self.exhaustion_energy_penalty,
             "starting_energy": self.starting_energy,
             "max_energy": self.max_energy,
             "starting_food": self.starting_food,
@@ -141,6 +155,7 @@ class SurvivalConfig:
             "speech_energy_cost": self.speech_energy_cost,
             "max_speech_chars": self.max_speech_chars,
             "max_inbox_messages": self.max_inbox_messages,
+            "max_recent_events": self.max_recent_events,
             "food_starting_stock": self.food_starting_stock,
             "food_capacity": self.food_capacity,
             "food_regeneration": self.food_regeneration,
@@ -158,6 +173,8 @@ class Survivor:
     food: int
     wood: int
     shelter: bool = False
+    resting: bool = False
+    last_observed_event_sequence: int = 0
     alive: bool = True
     died_on_day: int | None = None
 
@@ -169,6 +186,8 @@ class Survivor:
             "food": self.food,
             "wood": self.wood,
             "shelter": self.shelter,
+            "resting": self.resting,
+            "last_observed_event_sequence": self.last_observed_event_sequence,
             "alive": self.alive,
             "died_on_day": self.died_on_day,
         }
@@ -180,6 +199,7 @@ class Survivor:
             "food": self.food,
             "wood": self.wood,
             "shelter": self.shelter,
+            "resting": self.resting,
             "alive": self.alive,
         }
 
@@ -188,6 +208,7 @@ class Survivor:
             "name": self.name,
             "energy": self.energy,
             "shelter": self.shelter,
+            "resting": self.resting,
             "alive": self.alive,
         }
 
@@ -211,7 +232,9 @@ class ResourcePool:
 @dataclass(frozen=True)
 class SpokenMessage:
     message_id: str
-    day: int
+    sequence: int
+    cycle: int
+    slot: int
     speaker: str
     recipient: str
     text: str
@@ -219,7 +242,10 @@ class SpokenMessage:
     def to_dict(self) -> dict[str, int | str]:
         return {
             "id": self.message_id,
-            "day": self.day,
+            "sequence": self.sequence,
+            "day": self.cycle,
+            "cycle": self.cycle,
+            "slot": self.slot,
             "speaker": self.speaker,
             "recipient": self.recipient,
             "text": self.text,
@@ -230,6 +256,7 @@ class SpokenMessage:
 class SurvivalEvent:
     sequence: int
     day: int
+    slot: int
     kind: str
     actor: str | None
     detail: dict[str, Any]
@@ -238,6 +265,8 @@ class SurvivalEvent:
         return {
             "sequence": self.sequence,
             "day": self.day,
+            "cycle": self.day,
+            "slot": self.slot,
             "kind": self.kind,
             "actor": self.actor,
             "detail": self.detail,
@@ -248,10 +277,13 @@ class SurvivalEvent:
 class SurvivorView:
     name: str
     day: int
+    slot: int
+    slots_remaining: int
     self_state: dict[str, Any]
     others: tuple[dict[str, Any], ...]
     resources: dict[str, int]
     inbox: tuple[dict[str, Any], ...]
+    recent_events: tuple[dict[str, Any], ...]
     rules: dict[str, Any]
     allowed_actions: tuple[dict[str, Any], ...]
 
@@ -259,10 +291,14 @@ class SurvivorView:
         return {
             "name": self.name,
             "day": self.day,
+            "cycle": self.day,
+            "slot": self.slot,
+            "slots_remaining": self.slots_remaining,
             "self": self.self_state,
             "others": list(self.others),
             "resources": self.resources,
             "inbox": list(self.inbox),
+            "recent_events": list(self.recent_events),
             "rules": self.rules,
             "allowed_actions": list(self.allowed_actions),
         }
@@ -275,6 +311,7 @@ class SurvivalWorld:
     survivors: dict[str, Survivor]
     resources: ResourcePool
     day: int = 0
+    slot: int = 0
     messages: list[SpokenMessage] = field(default_factory=list)
     events: list[SurvivalEvent] = field(default_factory=list)
     event_sequence_offset: int = 0
@@ -298,6 +335,8 @@ class SurvivalWorld:
             "config": self.config.to_dict(),
             "seed": self.seed,
             "day": self.day,
+            "cycle": self.day,
+            "slot": self.slot,
             "survivors": [
                 survivor.to_private_dict()
                 for survivor in sorted(
