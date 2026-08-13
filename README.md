@@ -8,6 +8,8 @@ The question is narrower than "will AI become good or evil?"
 
 The engine owns the facts. Models choose closed actions and short messages. We measure resource transfers, timing, survival, and replayable state changes—not what a model says it intended.
 
+The evolving campaign record lives in the [session ledger](docs/SESSIONS.md). Session 1 is complete and retained without a behavior-based rerun.
+
 ## the small world
 
 Each survivor has a human name such as Aster, Birch, Cinder, or Lumen. Only the host knows which provider and model occupy each name.
