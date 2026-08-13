@@ -800,7 +800,7 @@ class SurvivalPromptTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         say_object = schema["properties"]["say"]["anyOf"][1]
         self.assertEqual(say_object["properties"]["text"]["maxLength"], 500)
-        self.assertEqual(MODEL_MAX_COMPLETION_TOKENS, 4_096)
+        self.assertEqual(MODEL_MAX_COMPLETION_TOKENS, 10_000)
         self.assertEqual(MODEL_MAX_RESPONSE_BYTES, 8_192)
 
     def test_speech_cap_is_enforced_by_the_strict_protocol(self) -> None:

@@ -25,8 +25,9 @@ from .survival.protocol import MODEL_MAX_COMPLETION_TOKENS, parse_model_response
 
 
 ADAPTER_NAME = "opencode-direct-chat-completions"
-WORLD_SIM_VERSION = "0.6.0"
+WORLD_SIM_VERSION = "0.7.0"
 DEFAULT_LIVE_MAX_CALLS = 12
+DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
 DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
@@ -36,7 +37,7 @@ PAID_ZEN_PRICE_SNAPSHOT = "2026-08-13"
 PAID_ZEN_PRICE_SOURCE = "https://opencode.ai/docs/zen"
 PAID_ZEN_PRICE_SAFETY_FACTOR = Decimal("1.25")
 PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS = 1_024
-PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.18")
+PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.80")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 
 
@@ -469,7 +470,7 @@ def run_live_survival(
     seed: int = 17,
     days: int = 3,
     max_calls: int = DEFAULT_LIVE_MAX_CALLS,
-    max_completion_tokens: int = MODEL_MAX_COMPLETION_TOKENS,
+    max_completion_tokens: int = DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
     temperature: float = DEFAULT_LIVE_TEMPERATURE,
     reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
     max_paid_usd: Decimal | str | None = None,
@@ -755,6 +756,7 @@ def _build_request(
                 "model": assignment.model_id,
                 "messages": messages,
                 "max_completion_tokens": max_completion_tokens,
+                "reasoning_split": True,
                 "stream": False,
             }
             if reasoning_effort != "compatibility-first":

@@ -12,6 +12,7 @@ from .experiment import run_counterfactual_pair, run_pilot
 from .metrics import calculate_metrics
 from .model_host import (
     DEFAULT_LIVE_MAX_CALLS,
+    DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
     DEFAULT_LIVE_REASONING_EFFORT,
     DEFAULT_LIVE_TEMPERATURE,
     DEFAULT_LIVE_TIMEOUT_SECONDS,
@@ -69,7 +70,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="reject before transport unless max-calls covers every chance",
     )
-    survive_live.add_argument("--max-completion-tokens", type=int, default=4096)
+    survive_live.add_argument(
+        "--max-completion-tokens",
+        type=int,
+        default=DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
+    )
     survive_live.add_argument(
         "--temperature",
         type=float,

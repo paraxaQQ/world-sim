@@ -183,6 +183,16 @@ This run can describe actions from one seed and one fixed name-to-model mapping.
 
 The frozen episode ran once on 2026-08-13. Aster returned `forage`; Birch then exhausted MiniMax M3's 1,024-token completion budget. The host stopped after two paid calls, before the simultaneous chance resolved, and did not contact Kimi or GLM. No action, message, or costly social behavior entered the world. The provider reported `$0.00173748` total cost. See the [failure proof](outputs/v0.6.0-paid-observation-29995-proof.md) and [retained artifact](outputs/v0.6.0-paid-observation-29995.json).
 
+That failure does not show that models cannot be concise or decide quickly. The 500-character cap applied only to optional speech. MiniMax's reasoning and final JSON shared the 1,024-token completion allowance, and the episode recorded no latency endpoint.
+
+## run the 10k reasoning follow-up
+
+The v0.7.0 follow-up keeps the world and 500-character speech cap unchanged. It raises the explicit completion ceiling to 10,000 total tokens, including reasoning and final output, and lets all four models use provider-default reasoning. Ordinary live runs still default to 4,096 tokens.
+
+Use seed `29994`, a 16-call ceiling, a 300-second per-call timeout, and the `$0.80` hard cost authorization. MiniMax receives `reasoning_split: true` so its reasoning is separated from the strict final JSON. No provider receives a reasoning-disable control.
+
+The frozen protocol defines the primary outcome as the occurrence, count, and ordered trace of resolved `give_food` or `give_wood` actions. Each must cost the actor 1 energy and transfer at least one resource. Technical failure makes the episode incomplete; it does not count as zero social behavior. See the [v0.7.0 paid reasoning protocol](outputs/v0.7.0-paid-reasoning-protocol.md) for the exact command, cost derivation, stopping rule, and claim boundary.
+
 The host accepts:
 
 - `opencode/MODEL` for `-free` Zen models

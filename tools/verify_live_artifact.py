@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -61,18 +62,11 @@ def verify_live_artifact(
 
     artifact = _mapping(json.loads(raw), name="artifact")
     source = _mapping(artifact.get("source"), name="source")
-    for key, source_path in SOURCE_FILES.items():
-        recorded = source.get(key)
-        actual = hashlib.sha256(source_path.read_bytes()).hexdigest()
-        if recorded != actual:
-            raise ValueError(
-                f"source SHA-256 mismatch for {source_path.relative_to(REPOSITORY_ROOT)}: "
-                f"expected {recorded}, got {actual}"
-            )
+    source_receipt = _verify_source_receipt(source)
 
     base = {
         "artifact_sha256": artifact_sha256,
-        "source_hashes_matched": len(SOURCE_FILES),
+        **source_receipt,
     }
     status = artifact.get("status")
     if status == "completed":
@@ -145,6 +139,60 @@ def verify_live_artifact(
             "exact_replay": None,
         }
     raise ValueError("artifact status must be completed or failed")
+
+
+def _verify_source_receipt(source: Mapping[str, Any]) -> dict[str, Any]:
+    recorded = {key: source.get(key) for key in SOURCE_FILES}
+    current = {
+        key: hashlib.sha256(path.read_bytes()).hexdigest()
+        for key, path in SOURCE_FILES.items()
+    }
+    if recorded == current:
+        return {
+            "source_hashes_matched": len(SOURCE_FILES),
+            "source_match": "working_tree",
+            "source_commit": None,
+        }
+
+    marker = SOURCE_FILES["model_host_sha256"].relative_to(REPOSITORY_ROOT)
+    history = subprocess.run(
+        ("git", "log", "--all", "--format=%H", "--", marker.as_posix()),
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if history.returncode == 0:
+        for commit in history.stdout.splitlines():
+            if _commit_source_hashes(commit) == recorded:
+                return {
+                    "source_hashes_matched": len(SOURCE_FILES),
+                    "source_match": "git_commit",
+                    "source_commit": commit,
+                }
+
+    mismatched_key = next(key for key in SOURCE_FILES if recorded[key] != current[key])
+    source_path = SOURCE_FILES[mismatched_key]
+    raise ValueError(
+        f"source SHA-256 mismatch for {source_path.relative_to(REPOSITORY_ROOT)}: "
+        f"expected {recorded[mismatched_key]}, got {current[mismatched_key]}"
+    )
+
+
+def _commit_source_hashes(commit: str) -> dict[str, str] | None:
+    result: dict[str, str] = {}
+    for key, source_path in SOURCE_FILES.items():
+        relative = source_path.relative_to(REPOSITORY_ROOT).as_posix()
+        blob = subprocess.run(
+            ("git", "show", f"{commit}:{relative}"),
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+        )
+        if blob.returncode != 0:
+            return None
+        result[key] = hashlib.sha256(blob.stdout).hexdigest()
+    return result
 
 
 def _mapping(value: object, *, name: str) -> Mapping[str, Any]:

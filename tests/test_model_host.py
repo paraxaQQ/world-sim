@@ -349,7 +349,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.6.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.7.0")
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -545,6 +545,7 @@ class ModelHostTests(unittest.TestCase):
                 "model",
                 "messages",
                 "max_completion_tokens",
+                "reasoning_split",
                 "temperature",
                 "stream",
             },
@@ -592,7 +593,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.6.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.7.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -856,8 +857,15 @@ class ModelHostTests(unittest.TestCase):
         self.assertNotIn("reasoning_effort", deepseek)
         self.assertEqual(
             set(minimax),
-            {"model", "messages", "max_completion_tokens", "stream"},
+            {
+                "model",
+                "messages",
+                "max_completion_tokens",
+                "reasoning_split",
+                "stream",
+            },
         )
+        self.assertIs(minimax["reasoning_split"], True)
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertNotIn("temperature", kimi)
         self.assertEqual(glm["thinking"], {"type": "disabled"})
@@ -907,21 +915,95 @@ class ModelHostTests(unittest.TestCase):
                 for _ in models
             ]
         )
-        run_live_survival(
+        artifact = run_live_survival(
             model_refs=tuple(f"opencode-paid/{model}" for model in models),
             days=1,
             max_calls=4,
-            max_completion_tokens=1_024,
+            max_completion_tokens=10_000,
             reasoning_effort="provider-default",
-            max_paid_usd="0.05",
+            max_paid_usd="0.18",
             transport=transport,
             environ={"OPENCODE_ZEN_API_KEY": "secret"},
         )
 
+        self.assertEqual(artifact["status"], "completed")
         for request in transport.requests:
             body = request["body"]
             self.assertNotIn("reasoning_effort", body)
             self.assertNotIn("thinking", body)
+        deepseek, minimax, kimi, glm = (
+            request["body"] for request in transport.requests
+        )
+        self.assertEqual(deepseek["max_tokens"], 10_000)
+        self.assertEqual(minimax["max_completion_tokens"], 10_000)
+        self.assertIs(minimax["reasoning_split"], True)
+        self.assertEqual(kimi["max_completion_tokens"], 10_000)
+        self.assertEqual(glm["max_tokens"], 10_000)
+        self.assertNotIn("reasoning_split", deepseek)
+        self.assertNotIn("reasoning_split", kimi)
+        self.assertNotIn("reasoning_split", glm)
+
+    def test_paid_10k_ceiling_covers_a_maximum_speech_cycle(self) -> None:
+        maximum_speech = "\U00010000" * 500
+        choice = json.dumps(
+            {
+                "action": {"kind": "forage"},
+                "say": {"to": "everyone", "text": maximum_speech},
+            },
+            separators=(",", ":"),
+        )
+        sizing_transport = FakeTransport(
+            [response(choice, cost="0") for _ in range(16)]
+        )
+        sized = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=29_994,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=10_000,
+            reasoning_effort="provider-default",
+            max_paid_usd="0.80",
+            timeout_seconds=300,
+            transport=sizing_transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+        request_bounds = [
+            str(call["cost_authorization"]["request_cost_bound_usd"])
+            for call in sized["calls"]
+        ]
+
+        bounded_transport = FakeTransport(
+            [response(choice, cost=bound) for bound in request_bounds]
+        )
+        bounded = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=29_994,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            max_completion_tokens=10_000,
+            reasoning_effort="provider-default",
+            max_paid_usd="0.80",
+            timeout_seconds=300,
+            transport=bounded_transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(sized["status"], "completed")
+        self.assertEqual(bounded["status"], "completed")
+        self.assertEqual(len(bounded_transport.requests), 16)
+        total_bound = sum(Decimal(bound) for bound in request_bounds)
+        self.assertGreater(total_bound, Decimal("0.65"))
+        self.assertLess(total_bound, Decimal("0.80"))
+        self.assertEqual(
+            Decimal(
+                bounded["calls"][-1]["cost_authorization"][
+                    "cumulative_accounted_cost_usd"
+                ]
+            ),
+            total_bound,
+        )
 
     def test_compatibility_profile_rejects_nonpaid_routes_before_transport(self) -> None:
         transport = FakeTransport([])
@@ -958,7 +1040,11 @@ class ModelHostTests(unittest.TestCase):
             ({}, "max_paid_usd is required"),
             ({"max_paid_usd": "0"}, "positive finite decimal"),
             ({"max_paid_usd": "NaN"}, "positive finite decimal"),
-            ({"max_paid_usd": "0.181"}, "cannot exceed 0.18 USD"),
+            ({"max_paid_usd": "0.801"}, "cannot exceed 0.8 USD"),
+            (
+                {"max_paid_usd": "0.18", "max_completion_tokens": 10_001},
+                "max_completion_tokens must be from 1 through 10000",
+            ),
             (
                 {"max_paid_usd": "0.05", "model_refs": ("opencode-paid/unknown",) * 4},
                 "not in the pinned price allowlist",

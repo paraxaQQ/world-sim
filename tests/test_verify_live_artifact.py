@@ -31,6 +31,11 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         self.assertTrue(receipt["failure_call_receipt_consistent"])
         self.assertIsNone(receipt["exact_replay"])
         self.assertEqual(receipt["source_hashes_matched"], 8)
+        self.assertEqual(receipt["source_match"], "git_commit")
+        self.assertEqual(
+            receipt["source_commit"],
+            "1c199cf36c885e16660baad7f62f5ab920ef3b55",
+        )
 
     def test_failed_receipt_rejects_a_mismatched_failure_kind(self) -> None:
         source = (
