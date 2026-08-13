@@ -1,5 +1,13 @@
 # changelog
 
+## 0.3.0 - 2026-08-12
+
+- add a deterministic named-survivor ecology with energy, food, wood, shelter, transfers, permanent death, and opaque resolution seats.
+- add one paid, 160-character message per survivor per day with next-day delivery and independent validation from the primary action.
+- add a human-phrased model prompt, strict response schema, 192-token adapter contract, and 2-KiB raw-response boundary.
+- add a scripted reference population, objective metrics, view-hashed choice-tape replay, canonical artifact hashes, `survive` CLI, and survival invariants covered by tests.
+- reframe Blind Commons and lineage selection as retained calibration instruments rather than the project headline.
+
 ## 0.2.0 - 2026-08-12
 
 - add deterministic policy bundles, inherited bounded memory, controlled mutation, and an explicit lineage graph.

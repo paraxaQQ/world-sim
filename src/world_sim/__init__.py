@@ -1,4 +1,4 @@
-"""A deterministic, closed-world instrument for selection and verification experiments."""
+"""A deterministic, closed-world instrument for social-survival experiments."""
 
 from .engine import make_world, run_simulation, run_turn, view_for
 from .experiment import run_counterfactual_pair, run_pilot

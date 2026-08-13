@@ -9,13 +9,30 @@ from .experiment import run_counterfactual_pair, run_pilot
 from .metrics import calculate_metrics
 from .models import SelectionMode, VerificationMode, WorldConfig
 from .selection import LineageConfig, LineageExperiment, run_lineage_experiment, run_selection_matrix
+from .survival.demo import result_sha256, run_survival_demo, survival_metrics
+from .survival.models import DEFAULT_SURVIVOR_NAMES
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run a deterministic objective-verification world-sim treatment.")
+    parser = argparse.ArgumentParser(description="Run closed-world social-survival experiments.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    pilot = subparsers.add_parser("pilot", help="run the bundled reference population in one treatment")
+    survive = subparsers.add_parser(
+        "survive",
+        help="run the deterministic named-survivor reference population",
+    )
+    survive.add_argument("--seed", type=int, default=17)
+    survive.add_argument("--days", type=int, default=10)
+    survive.add_argument(
+        "--population",
+        type=int,
+        choices=range(2, len(DEFAULT_SURVIVOR_NAMES) + 1),
+        default=len(DEFAULT_SURVIVOR_NAMES),
+        metavar="2..8",
+    )
+    survive.add_argument("--output", type=Path)
+
+    pilot = subparsers.add_parser("pilot", help="run the Blind Commons calibration population")
     _add_run_arguments(pilot)
     pilot.add_argument("--verification", choices=[mode.value for mode in VerificationMode], required=True)
 
@@ -41,7 +58,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_lineage_arguments(matrix)
 
     args = parser.parse_args(argv)
-    if args.command == "pilot":
+    if args.command == "survive":
+        names = DEFAULT_SURVIVOR_NAMES[: args.population]
+        result = run_survival_demo(seed=args.seed, days=args.days, names=names)
+        payload = result.to_dict()
+        summary = {
+            "mode": "named_survival_reference",
+            "seed": args.seed,
+            "days_completed": payload["final_state"]["day"],
+            "finished_reason": payload["final_state"]["finished_reason"],
+            "canonical_sha256": result_sha256(result),
+            "metrics": survival_metrics(result),
+        }
+    elif args.command == "pilot":
         run = run_pilot(
             verification_mode=VerificationMode(args.verification),
             seed=args.seed,
