@@ -176,7 +176,7 @@ Qualification `001` ran once on 2026-08-13. DeepSeek V4 Flash, Kimi K2.6, and GL
 
 Qualification `002` substituted Grok 4.5 before any behavioral run. It passed 4/4 on 2026-08-13 with one call per model and no retries or repairs. The provider-reported total was `$0.00180549`; the host's larger uncached calculation and accounted exposure was `$0.00238010`. See the [qualification 002 proof](outputs/v0.8.0-paid-panel-qualification-002-proof.md) and [retained artifact](outputs/v0.8.0-paid-panel-qualification-002.json). Behavioral seed `29993` remained unopened.
 
-The qualified panel is frozen for one one-cycle survival episode. Its 16-call, 20,000-input-token, and 10,000-output-token envelope is `$1.183`, so the command authorizes `$1.19` under the repository's `$1.20` hard ceiling. See the [frozen seed-29993 protocol](outputs/v0.8.0-paid-survival-29993-protocol.md). Run it once without provider retries, response repairs, or behavior-based reruns.
+The qualified panel was frozen for one one-cycle survival episode. Its 16-call, 20,000-input-token, and 10,000-output-token envelope was `$1.183`, so the command authorized `$1.19` under the repository's `$1.20` hard ceiling. Seed `29993` then completed once: 15 valid calls, 15 broadcast messages, zero attempted or completed costly transfers, and `$0.10711436` in provider-reported cost. See the [protocol](outputs/v0.8.0-paid-survival-29993-protocol.md), [proof](outputs/v0.8.0-paid-survival-29993-proof.md), and [retained artifact](outputs/v0.8.0-paid-survival-29993.json).
 
 The model protocol remains strict JSON:
 
