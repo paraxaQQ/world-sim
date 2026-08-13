@@ -70,26 +70,81 @@ def verify_live_artifact(
                 f"expected {recorded}, got {actual}"
             )
 
-    payload = _mapping(artifact.get("result"), name="result")
-    result = SurvivalResult(
-        initial_state=dict(_mapping(payload.get("initial_state"), name="initial_state")),
-        final_state=dict(_mapping(payload.get("final_state"), name="final_state")),
-        events=tuple(_sequence(payload.get("events"), name="events")),
-        choice_tape=tuple(_sequence(payload.get("choice_tape"), name="choice_tape")),
-        event_sequence_base=int(payload.get("event_sequence_base", 0)),
-    )
-    if replay_survival(result).to_dict() != result.to_dict():
-        raise ValueError("exact replay mismatch")
-    canonical_result_sha256 = result_sha256(result)
-    if artifact.get("canonical_result_sha256") != canonical_result_sha256:
-        raise ValueError("canonical result SHA-256 mismatch")
-
-    return {
+    base = {
         "artifact_sha256": artifact_sha256,
-        "canonical_result_sha256": canonical_result_sha256,
-        "exact_replay": True,
         "source_hashes_matched": len(SOURCE_FILES),
     }
+    status = artifact.get("status")
+    if status == "completed":
+        payload = _mapping(artifact.get("result"), name="result")
+        result = SurvivalResult(
+            initial_state=dict(
+                _mapping(payload.get("initial_state"), name="initial_state")
+            ),
+            final_state=dict(_mapping(payload.get("final_state"), name="final_state")),
+            events=tuple(_sequence(payload.get("events"), name="events")),
+            choice_tape=tuple(
+                _sequence(payload.get("choice_tape"), name="choice_tape")
+            ),
+            event_sequence_base=int(payload.get("event_sequence_base", 0)),
+        )
+        if replay_survival(result).to_dict() != result.to_dict():
+            raise ValueError("exact replay mismatch")
+        canonical_result_sha256 = result_sha256(result)
+        if artifact.get("canonical_result_sha256") != canonical_result_sha256:
+            raise ValueError("canonical result SHA-256 mismatch")
+        return {
+            **base,
+            "status": status,
+            "canonical_result_sha256": canonical_result_sha256,
+            "exact_replay": True,
+        }
+    if status == "failed":
+        failure = _mapping(artifact.get("failure"), name="failure")
+        _mapping(artifact.get("initial_state"), name="initial_state")
+        _mapping(artifact.get("partial_state"), name="partial_state")
+        calls = _sequence(artifact.get("calls"), name="calls")
+        call_sequence = failure.get("call_sequence")
+        if call_sequence is not None:
+            if type(call_sequence) is not int or call_sequence < 1:
+                raise ValueError("failure call_sequence must be positive or null")
+            matching = [
+                _mapping(call, name="call")
+                for call in calls
+                if isinstance(call, Mapping) and call.get("sequence") == call_sequence
+            ]
+            if len(matching) != 1 or matching[0].get("status") != "failed":
+                raise ValueError("failure does not identify one failed call")
+            error = _mapping(matching[0].get("error"), name="call error")
+            call = matching[0]
+            pairs = (
+                ("day", "day"),
+                ("cycle", "cycle"),
+                ("slot", "slot"),
+                ("seat_id", "seat_id"),
+                ("public_name", "public_name"),
+                ("model", "model"),
+            )
+            if any(failure.get(left) != call.get(right) for left, right in pairs):
+                raise ValueError("failure identity does not match its call receipt")
+            error_pairs = (
+                ("kind", "kind"),
+                ("message", "message"),
+                ("http_status", "http_status"),
+            )
+            if any(
+                failure.get(left) != error.get(right)
+                for left, right in error_pairs
+            ):
+                raise ValueError("failure error does not match its call receipt")
+        return {
+            **base,
+            "status": status,
+            "failure_kind": failure.get("kind"),
+            "failure_call_receipt_consistent": True,
+            "exact_replay": None,
+        }
+    raise ValueError("artifact status must be completed or failed")
 
 
 def _mapping(value: object, *, name: str) -> Mapping[str, Any]:

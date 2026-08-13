@@ -181,6 +181,8 @@ Run this episode once. Do not retry a failed provider call, repair a malformed r
 
 This run can describe actions from one seed and one fixed name-to-model mapping. It cannot establish a model ranking, stable model traits, cooperation, or the effect of communication. Speech remains observable, but this episode has no silent control. See the [frozen paid-observation protocol](outputs/v0.6.0-paid-observation-protocol.md) before running it.
 
+The frozen episode ran once on 2026-08-13. Aster returned `forage`; Birch then exhausted MiniMax M3's 1,024-token completion budget. The host stopped after two paid calls, before the simultaneous chance resolved, and did not contact Kimi or GLM. No action, message, or costly social behavior entered the world. The provider reported `$0.00173748` total cost. See the [failure proof](outputs/v0.6.0-paid-observation-29995-proof.md) and [retained artifact](outputs/v0.6.0-paid-observation-29995.json).
+
 The host accepts:
 
 - `opencode/MODEL` for `-free` Zen models

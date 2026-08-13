@@ -7,6 +7,7 @@
 - retain per-call cost authorization and fail before an over-budget request
 - omit MiniMax M3's undocumented thinking control while retaining documented controls for the other three models
 - freeze the first paid four-model observation protocol without changing the world rules
+- retain the one-shot seed `29995` failure after MiniMax M3 exhausted its completion budget on call 2
 
 ## 0.5.1 - 2026-08-13
 
