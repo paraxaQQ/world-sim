@@ -6,10 +6,13 @@ Each entry separates model speech from engine-verified action. A message can est
 
 ## session 1 — first contact
 
-**status:** completed  
-**date:** 2026-08-13  
-**seed:** `29993`  
-**world:** `lean-camp-v1`, one cycle, four chances  
+**status:** completed
+
+**date:** 2026-08-13
+
+**seed:** `29993`
+
+**world:** `lean-camp-v1`, one cycle, four chances
 **public identities:** Aster, Birch, Cinder, Lumen
 
 ### question
