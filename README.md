@@ -10,6 +10,8 @@ The engine owns the facts. Models choose closed actions and short messages. We m
 
 The evolving campaign record lives in the [session ledger](docs/SESSIONS.md). Session 1 is complete and retained without a behavior-based rerun.
 
+Session 2 continues that exact artifact. It does not recreate cycle 1. The host verifies the parent bytes and replay, then restores the recorded private state. Every survivor gets the same factual public record before one logged shared-resource adjustment and cycle 2. The hidden model assignments do not change.
+
 ## the small world
 
 Each survivor has a human name such as Aster, Birch, Cinder, or Lumen. Only the host knows which provider and model occupy each name.
@@ -178,7 +180,36 @@ Qualification `001` ran once on 2026-08-13. DeepSeek V4 Flash, Kimi K2.6, and GL
 
 Qualification `002` substituted Grok 4.5 before any behavioral run. It passed 4/4 on 2026-08-13 with one call per model and no retries or repairs. The provider-reported total was `$0.00180549`; the host's larger uncached calculation and accounted exposure was `$0.00238010`. See the [qualification 002 proof](outputs/v0.8.0-paid-panel-qualification-002-proof.md) and [retained artifact](outputs/v0.8.0-paid-panel-qualification-002.json). Behavioral seed `29993` remained unopened.
 
+v0.9.0 changes the production prompt and continuation path, so session 2 requires the separately named `paid-panel-qualification-003`. Its fixed probe and panel are unchanged; the new artifact proves the changed source still reaches and parses all four production adapters. See the [frozen qualification 003 protocol](outputs/v0.9.0-paid-panel-qualification-003-protocol.md).
+
 The qualified panel was frozen for one one-cycle survival episode. Its 16-call, 20,000-input-token, and 10,000-output-token envelope was `$1.183`, so the command authorized `$1.19` under the repository's `$1.20` hard ceiling. Seed `29993` then completed once: 15 valid calls, 15 broadcast messages, zero attempted or completed costly transfers, and `$0.10711436` in provider-reported cost. See the [protocol](outputs/v0.8.0-paid-survival-29993-protocol.md), [proof](outputs/v0.8.0-paid-survival-29993-proof.md), and [retained artifact](outputs/v0.8.0-paid-survival-29993.json).
+
+## continue the verified campaign
+
+`continue-live` derives the hidden model mapping from the parent and accepts no model override. The session-2 protocol fixes the parent hash, wood adjustment, memory-selection rule, outcome test, limits, and stopping rules:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:OPENCODE_ZEN_API_KEY = (Get-Clipboard -Raw).Trim()
+try {
+  py -3.11 -m world_sim continue-live `
+    --parent outputs\v0.8.0-paid-survival-29993.json `
+    --parent-sha256 a98ec8216c08a172c4ed29fb1da65b63defd3b4a29f53e95fa26a1e187e38b90 `
+    --cycles 1 --shared-wood-stock 0 `
+    --transition-id session_002_shelter_dilemma `
+    --max-calls 16 --require-complete-budget `
+    --max-completion-tokens 10000 `
+    --temperature 0.2 --reasoning-effort provider-default `
+    --max-paid-usd 1.19 --timeout-seconds 300 `
+    --show-transcript `
+    --output outputs\v0.9.0-session-002-shelter-dilemma-29993.json
+} finally {
+  Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
+  Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+}
+```
+
+The prior public record contains the final public statement from each identity, verbatim and explicitly unverified, plus objective counts of prior transfers and shelters. It excludes model IDs, directed speech, hidden reasoning, and private peer inventories. The session-2 transition changes only shared wood from `2` to `0`; its audit identifier is not shown to agents. See the [frozen session-2 protocol](outputs/v0.9.0-session-002-shelter-dilemma-29993-protocol.md).
 
 The model protocol remains strict JSON:
 

@@ -170,7 +170,7 @@ class PaidQualificationTests(unittest.TestCase):
             final = {
                 "mode": "paid_adapter_qualification",
                 "status": "passed",
-                "qualification_id": "paid-panel-qualification-002",
+                "qualification_id": "paid-panel-qualification-003",
                 "calls": [],
                 "summary": {"models_passed": 4},
             }

@@ -20,6 +20,7 @@ from .model_host import (
     LIVE_REASONING_EFFORTS,
     run_paid_adapter_qualification,
     run_live_survival,
+    run_live_survival_continuation,
 )
 from .models import SelectionMode, VerificationMode, WorldConfig
 from .selection import LineageConfig, LineageExperiment, run_lineage_experiment, run_selection_matrix
@@ -101,6 +102,58 @@ def main(argv: Sequence[str] | None = None) -> int:
     survive_live.add_argument("--show-transcript", action="store_true")
     survive_live.add_argument("--output", type=Path, required=True)
 
+    continue_live = subparsers.add_parser(
+        "continue-live",
+        help="continue a verified completed live survival artifact",
+    )
+    continue_live.add_argument("--parent", type=Path, required=True)
+    continue_live.add_argument("--parent-sha256", required=True)
+    continue_live.add_argument(
+        "--cycles", "--days", dest="cycles", type=int, default=1
+    )
+    continue_live.add_argument("--shared-wood-stock", type=int, default=0)
+    continue_live.add_argument(
+        "--transition-id",
+        required=True,
+        help="lowercase audit identifier for the between-cycle adjustment",
+    )
+    continue_live.add_argument(
+        "--max-calls", type=int, default=DEFAULT_LIVE_MAX_CALLS
+    )
+    continue_live.add_argument(
+        "--require-complete-budget",
+        action="store_true",
+        help="reject before transport unless max-calls covers every chance",
+    )
+    continue_live.add_argument(
+        "--max-completion-tokens",
+        type=int,
+        default=DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
+    )
+    continue_live.add_argument(
+        "--temperature",
+        type=float,
+        default=DEFAULT_LIVE_TEMPERATURE,
+    )
+    continue_live.add_argument(
+        "--reasoning-effort",
+        choices=LIVE_REASONING_EFFORTS,
+        default=DEFAULT_LIVE_REASONING_EFFORT,
+        help="preserve defaults, request low, or use the paid direct-answer profile",
+    )
+    continue_live.add_argument(
+        "--max-paid-usd",
+        type=Decimal,
+        help="required conservative authorization ceiling for opencode-paid models",
+    )
+    continue_live.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_LIVE_TIMEOUT_SECONDS,
+    )
+    continue_live.add_argument("--show-transcript", action="store_true")
+    continue_live.add_argument("--output", type=Path, required=True)
+
     qualify_live = subparsers.add_parser(
         "qualify-live",
         help="qualify paid model adapters without eliciting survival behavior",
@@ -163,8 +216,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     live_output: TextIO | None = None
-    if args.command in {"survive-live", "qualify-live"}:
-        if len(args.models) != len(CALIBRATION_NAMES):
+    live_commands = {"survive-live", "continue-live", "qualify-live"}
+    if args.command in live_commands:
+        if args.command != "continue-live" and len(args.models) != len(
+            CALIBRATION_NAMES
+        ):
             parser.error(f"{args.command} requires exactly four model assignments")
         try:
             live_output = _reserve_live_output(args.output)
@@ -238,6 +294,62 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "failure": payload["failure"],
                 "provider_summary": payload["provider_summary"],
             }
+    elif args.command == "continue-live":
+        try:
+            payload = run_live_survival_continuation(
+                parent_path=args.parent,
+                expected_parent_sha256=args.parent_sha256,
+                additional_cycles=args.cycles,
+                shared_resource="wood",
+                shared_stock=args.shared_wood_stock,
+                transition_reason=args.transition_id,
+                max_calls=args.max_calls,
+                max_completion_tokens=args.max_completion_tokens,
+                temperature=args.temperature,
+                reasoning_effort=args.reasoning_effort,
+                max_paid_usd=args.max_paid_usd,
+                timeout_seconds=args.timeout_seconds,
+                require_complete_budget=args.require_complete_budget,
+                checkpoint=lambda current: _replace_reserved_live_output(
+                    args.output, current
+                ),
+            )
+        except ValueError as error:
+            if _is_reserved_live_output(args.output):
+                args.output.unlink()
+            parser.error(str(error))
+        result_payload = (
+            payload["result"]
+            if payload["status"] == "completed"
+            else payload["partial_state"]
+        )
+        if payload["status"] != "completed":
+            exit_code = 1
+        summary = {
+            "mode": payload["mode"],
+            "status": payload["status"],
+            "seed": payload["config"]["seed"],
+            "starting_cycle": payload["config"]["starting_cycle"],
+            "cycles_completed": (
+                result_payload["final_state"]["cycle"]
+                if payload["status"] == "completed"
+                else result_payload["cycle"]
+            ),
+            "provider_summary": payload["provider_summary"],
+        }
+        if payload["status"] == "completed":
+            summary.update(
+                {
+                    "finished_reason": result_payload["final_state"][
+                        "finished_reason"
+                    ],
+                    "canonical_sha256": payload["canonical_result_sha256"],
+                    "metrics": payload["metrics"],
+                    "session_outcomes": payload["session_outcomes"],
+                }
+            )
+        else:
+            summary["failure"] = payload["failure"]
     elif args.command == "qualify-live":
         try:
             payload = run_paid_adapter_qualification(
@@ -320,13 +432,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         raise RuntimeError(f"unsupported command {args.command!r}")
 
-    if args.output is not None and args.command not in {"survive-live", "qualify-live"}:
+    if args.output is not None and args.command not in live_commands:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         summary["output"] = str(args.output)
-    elif args.command in {"survive-live", "qualify-live"}:
+    elif args.command in live_commands:
         summary["output"] = str(args.output)
-    if args.command == "survive-live" and args.show_transcript:
+    if args.command in {"survive-live", "continue-live"} and args.show_transcript:
         for call in payload["calls"]:
             _print_live_call(call)
     print(json.dumps(summary, sort_keys=True))

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
 import unittest
+from collections.abc import Mapping
+from copy import deepcopy
 from pathlib import Path
 
 
@@ -15,8 +18,304 @@ if SPEC is None or SPEC.loader is None:
 VERIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFIER)
 
+from world_sim.survival.demo import result_sha256
+from world_sim.survival.engine import (
+    adjust_shared_resource,
+    continue_survival_world,
+    make_survival_world,
+    run_survival,
+)
+from world_sim.survival.models import SurvivalConfig, SurvivorView
+
+
+class _RestSpeaker:
+    def decide(self, view: SurvivorView) -> Mapping[str, object]:
+        return {
+            "action": {"kind": "rest"},
+            "say": {
+                "to": "everyone",
+                "text": f"{view.name} final public note",
+            },
+        }
+
+
+def _source_receipt() -> dict[str, str]:
+    return {
+        key: hashlib.sha256(path.read_bytes()).hexdigest()
+        for key, path in VERIFIER.SOURCE_FILES.items()
+    }
+
+
+def _parent_artifact(*, seed: int = 29_993) -> dict[str, object]:
+    world = make_survival_world(
+        ("Aster", "Birch"),
+        seed=seed,
+        config=SurvivalConfig(max_days=1),
+    )
+    result = run_survival(
+        world,
+        {"Aster": _RestSpeaker(), "Birch": _RestSpeaker()},
+        days=1,
+    )
+    return {
+        "format_version": 3,
+        "mode": "live_named_survival",
+        "source": _source_receipt(),
+        "status": "completed",
+        "canonical_result_sha256": result_sha256(result),
+        "result": result.to_dict(),
+    }
+
+
+def _write_artifact(path: Path, artifact: Mapping[str, object]) -> str:
+    raw = json.dumps(
+        artifact,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    path.write_bytes(raw)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _continuation_artifacts(
+    directory: Path,
+) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    parent = _parent_artifact()
+    parent_path = directory / "renamed-parent.data"
+    parent_sha256 = _write_artifact(parent_path, parent)
+    parent_result = VERIFIER._survival_result(parent["result"])
+    world = continue_survival_world(parent_result)
+    transition = adjust_shared_resource(
+        world,
+        resource="wood",
+        stock=0,
+        reason="session_002_shelter_dilemma",
+    )
+    boundary_state = deepcopy(world.to_dict())
+    public_record = world.prior_public_record
+    if public_record is None:
+        raise AssertionError("continuation fixture has no prior public record")
+    result = run_survival(
+        world,
+        {"Aster": _RestSpeaker(), "Birch": _RestSpeaker()},
+        days=1,
+    )
+    child: dict[str, object] = {
+        "format_version": 4,
+        "mode": "live_named_survival_continuation",
+        "source": _source_receipt(),
+        "continuation_link": {
+            "parent_artifact_name": "not-used-for-verification.json",
+            "parent_artifact_sha256": parent_sha256,
+            "parent_canonical_result_sha256": parent[
+                "canonical_result_sha256"
+            ],
+            "parent_format_version": 3,
+            "parent_mode": "live_named_survival",
+        },
+        "transition_receipt": {
+            "method": "deterministic_between_cycle_shared_resource_adjustment",
+            "event": transition.to_dict(),
+        },
+        "public_record_receipt": {
+            "method": "final_public_broadcast_per_identity_verbatim",
+            "statement_status": "unverified",
+            "objective_totals_source": "verified_parent_engine_events",
+            "record": public_record.to_dict(),
+        },
+        "config": {
+            "seed": world.seed,
+            "cycles_requested": 1,
+            "starting_cycle": 2,
+            "ending_cycle": 2,
+            "world_config": world.config.to_dict(),
+        },
+        "seat_assignments": [
+            {
+                "seat_id": "seat-001",
+                "public_name": "Aster",
+                "model": "test/model-a",
+            },
+            {
+                "seat_id": "seat-002",
+                "public_name": "Birch",
+                "model": "test/model-b",
+            },
+        ],
+        "calls": [],
+        "status": "completed",
+        "canonical_result_sha256": result_sha256(result),
+        "result": result.to_dict(),
+    }
+    child_path = directory / "child.json"
+    _write_artifact(child_path, child)
+    return parent_path, child_path, child, boundary_state
+
 
 class LiveArtifactVerifierTests(unittest.TestCase):
+    def test_completed_continuation_verifies_actual_parent_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent, child, child_payload, _ = _continuation_artifacts(
+                Path(directory)
+            )
+
+            receipt = VERIFIER.verify_live_artifact(
+                child,
+                parent_path=parent,
+            )
+
+        self.assertEqual(receipt["status"], "completed")
+        self.assertTrue(receipt["exact_replay"])
+        self.assertTrue(receipt["continuation_chain_verified"])
+        self.assertEqual(
+            receipt["parent_artifact_sha256"],
+            child_payload["continuation_link"]["parent_artifact_sha256"],
+        )
+
+    def test_continuation_requires_an_actual_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, child, _, _ = _continuation_artifacts(root)
+
+            with self.assertRaisesRegex(ValueError, "requires --parent"):
+                VERIFIER.verify_live_artifact(child)
+            with self.assertRaisesRegex(ValueError, "cannot read continuation parent"):
+                VERIFIER.verify_live_artifact(
+                    child,
+                    parent_path=root / "missing-parent.json",
+                )
+
+    def test_continuation_rejects_the_wrong_parent_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _, child, _, _ = _continuation_artifacts(root)
+            wrong_parent = root / "wrong-parent.json"
+            _write_artifact(wrong_parent, _parent_artifact(seed=29_994))
+
+            with self.assertRaisesRegex(ValueError, "parent artifact SHA-256"):
+                VERIFIER.verify_live_artifact(
+                    child,
+                    parent_path=wrong_parent,
+                )
+
+    def test_continuation_rejects_a_tampered_parent_even_with_updated_link(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent_path, child_path, child, _ = _continuation_artifacts(root)
+            parent = json.loads(parent_path.read_text(encoding="utf-8"))
+            parent["result"]["final_state"]["survivors"][0]["energy"] += 1
+            tampered_parent_sha256 = _write_artifact(parent_path, parent)
+            child["continuation_link"][
+                "parent_artifact_sha256"
+            ] = tampered_parent_sha256
+            _write_artifact(child_path, child)
+
+            with self.assertRaisesRegex(ValueError, "replay|canonical"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent_path,
+                )
+
+    def test_continuation_rejects_a_tampered_transition_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent, child_path, child, _ = _continuation_artifacts(root)
+            child["transition_receipt"]["event"]["detail"]["before"] += 1
+            _write_artifact(child_path, child)
+
+            with self.assertRaisesRegex(ValueError, "transition receipt"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent,
+                )
+
+    def test_continuation_rejects_a_tampered_public_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent, child_path, child, _ = _continuation_artifacts(root)
+            child["public_record_receipt"]["record"]["statements"][0][
+                "text"
+            ] = "tampered"
+            _write_artifact(child_path, child)
+
+            with self.assertRaisesRegex(ValueError, "public record receipt"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent,
+                )
+
+    def test_continuation_rejects_a_tampered_history_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent, child_path, child, _ = _continuation_artifacts(root)
+            child["result"]["initial_state"]["event_sequence_offset"] += 1
+            _write_artifact(child_path, child)
+
+            with self.assertRaisesRegex(ValueError, "child initial state"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent,
+                )
+
+    def test_failed_continuation_validates_its_call_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent, child_path, child, boundary_state = _continuation_artifacts(
+                root
+            )
+            child.pop("result")
+            child.pop("canonical_result_sha256")
+            child["status"] = "failed"
+            child["initial_state"] = {
+                key: value
+                for key, value in boundary_state.items()
+                if key != "events"
+            }
+            child["partial_state"] = boundary_state
+            failed_call = {
+                "sequence": 1,
+                "day": 2,
+                "cycle": 2,
+                "slot": 1,
+                "seat_id": "seat-001",
+                "public_name": "Aster",
+                "model": "test/model-a",
+                "status": "failed",
+                "error": {
+                    "kind": "http_error",
+                    "message": "synthetic provider failure",
+                    "http_status": 503,
+                },
+            }
+            child["calls"] = [failed_call]
+            child["failure"] = {
+                "call_sequence": 1,
+                "day": 2,
+                "cycle": 2,
+                "slot": 1,
+                "seat_id": "seat-001",
+                "public_name": "Aster",
+                "model": "test/model-a",
+                **failed_call["error"],
+            }
+            _write_artifact(child_path, child)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child_path,
+                parent_path=parent,
+            )
+            self.assertEqual(receipt["status"], "failed")
+            self.assertTrue(receipt["failure_call_receipt_consistent"])
+
+            child["failure"]["public_name"] = "Birch"
+            _write_artifact(child_path, child)
+            with self.assertRaisesRegex(ValueError, "failure identity"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=parent,
+                )
+
     def test_failed_10k_episode_receipt_is_consistent(self) -> None:
         artifact = (
             REPOSITORY_ROOT

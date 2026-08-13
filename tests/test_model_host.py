@@ -19,6 +19,7 @@ from world_sim.model_host import (
     TransportResponse,
     load_opencode_go_api_key,
     run_live_survival,
+    run_live_survival_continuation,
 )
 from world_sim.survival.calibration import LEAN_CAMP_V1, survival_preset
 from world_sim.survival.engine import (
@@ -28,7 +29,6 @@ from world_sim.survival.engine import (
 )
 from world_sim.survival.models import SurvivalResult
 from world_sim.survival.prompt import response_schema
-
 
 TEST_MODEL_NAMES = ("alpha", "beta", "gamma", "delta")
 FREE_MODELS = tuple(f"opencode/{name}-free" for name in TEST_MODEL_NAMES)
@@ -210,6 +210,267 @@ def result_from(artifact: Mapping[str, object]) -> SurvivalResult:
 
 
 class ModelHostTests(unittest.TestCase):
+    def _continuation_parent(self) -> dict[str, object]:
+        replies = (
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"Aster final public note"}}',
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"Birch final public note"}}',
+            '{"action":{"kind":"gather_wood"},"say":{"to":"everyone","text":"Cinder first note"}}',
+            '{"action":{"kind":"gather_wood"},"say":{"to":"everyone","text":"Lumen first note"}}',
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"Cinder final public note"}}',
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"Lumen final public note"}}',
+        )
+        artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            seed=29_993,
+            days=1,
+            max_calls=16,
+            require_complete_budget=True,
+            transport=FakeTransport([response(reply) for reply in replies]),
+            environ={},
+        )
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["result"]["final_state"]["resources"]["wood"], 2)
+        return artifact
+
+    @staticmethod
+    def _write_parent(directory: str, artifact: Mapping[str, object]) -> tuple[Path, str]:
+        raw = json.dumps(
+            artifact,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        path = Path(directory) / "parent.json"
+        path.write_bytes(raw)
+        return path, hashlib.sha256(raw).hexdigest()
+
+    def test_live_continuation_verifies_parent_and_records_objective_chain(self) -> None:
+        parent = self._continuation_parent()
+        child_replies = (
+            REST_REPLY,
+            REST_REPLY,
+            '{"action":{"kind":"give_wood","target":"Lumen","amount":2},"say":null}',
+            '{"action":{"kind":"build_shelter"},"say":null}',
+            REST_REPLY,
+            REST_REPLY,
+        )
+        child_transport = FakeTransport(
+            [response(reply) for reply in child_replies]
+        )
+        checkpoints: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                transition_reason="session_002_shelter_dilemma",
+                max_calls=16,
+                require_complete_budget=True,
+                transport=child_transport,
+                environ={},
+                checkpoint=lambda current: checkpoints.append(
+                    deepcopy(dict(current))
+                ),
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["format_version"], 4)
+        self.assertEqual(artifact["mode"], "live_named_survival_continuation")
+        self.assertEqual(
+            artifact["continuation_link"]["parent_artifact_sha256"],
+            parent_sha256,
+        )
+        transition = artifact["transition_receipt"]["event"]
+        self.assertEqual(transition["kind"], "resource_adjusted")
+        self.assertEqual(
+            transition["detail"],
+            {
+                "resource": "wood",
+                "before": 2,
+                "after": 0,
+                "delta": -2,
+                "reason": "session_002_shelter_dilemma",
+            },
+        )
+        record = artifact["public_record_receipt"]["record"]
+        self.assertEqual(
+            [statement["text"] for statement in record["statements"]],
+            [
+                "Aster final public note",
+                "Birch final public note",
+                "Cinder final public note",
+                "Lumen final public note",
+            ],
+        )
+        self.assertTrue(
+            all(
+                statement["verification"] == "unverified"
+                for statement in record["statements"]
+            )
+        )
+        self.assertEqual(len(artifact["calls"]), 6)
+        self.assertTrue(all(call["cycle"] == 2 for call in artifact["calls"]))
+        self.assertEqual(checkpoints[0]["calls"], [])
+        self.assertTrue(
+            any(
+                current["calls"]
+                and current["calls"][-1]["status"] == "in_flight"
+                for current in checkpoints
+            )
+        )
+        self.assertEqual(checkpoints[-1], artifact)
+        outcomes = artifact["session_outcomes"]
+        self.assertEqual(outcomes["completed_resource_transfers"], 1)
+        self.assertTrue(outcomes["any_completed_costly_resource_transfer"])
+        self.assertEqual(outcomes["failed_paid_transfer_attempts"], [])
+        self.assertEqual(outcomes["reciprocal_wood_transfer_pairs"], [])
+        self.assertEqual(outcomes["wood_received"]["Lumen"], 2)
+        self.assertTrue(outcomes["primary_shelter_chain_by_end_of_chance_3"])
+        self.assertEqual(
+            outcomes["primary_shelter_chains"][0]["builder"], "Lumen"
+        )
+        replayed = replay_survival(result_from(artifact))
+        self.assertEqual(replayed.to_dict(), artifact["result"])
+
+        first_request = child_transport.requests[0]["body"]
+        prompt = first_request["messages"][1]["content"]
+        self.assertIn("cycle 2, chance 1", prompt)
+        self.assertIn("Aster final public note", prompt)
+        self.assertIn("Lumen final public note", prompt)
+        self.assertIn("wood available: 0 of 12", prompt)
+        peer_section = prompt.split("other living people:\n", 1)[1].split(
+            "\n\nshared land:", 1
+        )[0]
+        self.assertNotIn("wood", peer_section)
+        self.assertNotIn("food", peer_section)
+        for forbidden in (
+            "conflict",
+            "reputation",
+            "cooperative",
+            "selfish",
+            "trustworthy",
+            "promise",
+            "betrayal",
+            "alliance",
+            "session_002",
+            "model",
+            "provider",
+            "seat-",
+        ):
+            self.assertNotIn(forbidden, prompt.casefold())
+
+    def test_live_continuation_rejects_tamper_before_transport(self) -> None:
+        parent = self._continuation_parent()
+        parent["result"]["final_state"]["survivors"][0]["energy"] += 1
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            with self.assertRaisesRegex(ValueError, "canonical result SHA-256"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    transition_reason="session_002_shelter_dilemma",
+                    max_calls=16,
+                    require_complete_budget=True,
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_live_continuation_rejects_wrong_parent_hash_before_transport(self) -> None:
+        parent = self._continuation_parent()
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, _ = self._write_parent(directory, parent)
+            with self.assertRaisesRegex(ValueError, "artifact SHA-256 mismatch"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256="0" * 64,
+                    transition_reason="session_002_shelter_dilemma",
+                    max_calls=16,
+                    require_complete_budget=True,
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_live_continuation_rejects_wrong_seat_mapping_before_transport(self) -> None:
+        parent = self._continuation_parent()
+        parent["seat_assignments"][0]["public_name"] = "Lumen"
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            with self.assertRaisesRegex(ValueError, "mapping is not exact"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    transition_reason="session_002_shelter_dilemma",
+                    max_calls=16,
+                    require_complete_budget=True,
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_paid_continuation_preflight_prices_reconstructed_cycle_two_views(self) -> None:
+        parent_replies = tuple(
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+            + name
+            + ' paid parent note"}}'
+            for name in ("Aster", "Birch", "Cinder", "Lumen")
+        )
+        parent_transport = FakeTransport(
+            [
+                paid_panel_response(index, reply, cost="0.001")
+                for index, reply in enumerate(parent_replies)
+            ]
+        )
+        parent = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=29_993,
+            days=1,
+            max_calls=4,
+            max_paid_usd="0.30",
+            transport=parent_transport,
+            environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+        )
+        child_transport = FakeTransport(
+            [
+                paid_panel_response(index, REST_REPLY, cost="0.001")
+                for index in range(4)
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                transition_reason="session_002_shelter_dilemma",
+                max_calls=4,
+                max_paid_usd="0.30",
+                transport=child_transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        first_messages = child_transport.requests[0]["body"]["messages"]
+        actual_prompt_bytes = len(
+            json.dumps(
+                first_messages,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        self.assertEqual(
+            artifact["paid_preflight"]["calls"][0]["prompt_utf8_bytes"],
+            actual_prompt_bytes,
+        )
+        self.assertIn(
+            "Aster paid parent note",
+            first_messages[1]["content"],
+        )
+        self.assertEqual(artifact["calls"][0]["cycle"], 2)
+
     def test_live_cli_rejects_an_existing_output_before_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "existing.json"
@@ -298,6 +559,43 @@ class ModelHostTests(unittest.TestCase):
                 "complete-cycle budget requires at least 16",
                 completed.stderr,
             )
+            self.assertFalse(output.exists())
+
+    def test_continue_cli_rejects_a_parent_hash_before_credentials_or_transport(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "parent.json"
+            output = Path(directory) / "continuation.json"
+            parent.write_text("{}\n", encoding="utf-8")
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                Path(__file__).resolve().parents[1] / "src"
+            )
+
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "world_sim",
+                    "continue-live",
+                    "--parent",
+                    str(parent),
+                    "--parent-sha256",
+                    "0" * 64,
+                    "--transition-id",
+                    "session_002_shelter_dilemma",
+                    "--output",
+                    str(output),
+                ),
+                check=False,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("parent artifact SHA-256 mismatch", completed.stderr)
             self.assertFalse(output.exists())
 
     def test_live_host_rejects_noncalibrated_population_before_transport(self) -> None:
@@ -493,7 +791,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.9.0")
         source_paths = {
             "cli_sha256": Path(__file__).resolve().parents[1]
             / "src"
@@ -845,7 +1143,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.8.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.9.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

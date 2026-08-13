@@ -4,20 +4,23 @@ import hashlib
 import json
 import random
 import re
-from copy import deepcopy
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
+from dataclasses import replace
 from typing import Any, Protocol
 
 from .models import (
     DEFAULT_SURVIVOR_NAMES,
+    PriorPublicRecord,
+    PriorPublicStatement,
     ResourcePool,
     SpokenMessage,
     SurvivalConfig,
     SurvivalEvent,
     SurvivalResult,
+    SurvivalWorld,
     Survivor,
     SurvivorView,
-    SurvivalWorld,
 )
 from .protocol import (
     ParsedSurvivalChoice,
@@ -85,6 +88,140 @@ def make_survival_world(
     )
 
 
+def continue_survival_world(
+    parent: SurvivalResult,
+    *,
+    additional_cycles: int = 1,
+) -> SurvivalWorld:
+    if isinstance(additional_cycles, bool) or not isinstance(
+        additional_cycles, int
+    ):
+        raise TypeError("additional_cycles must be an integer")
+    if additional_cycles < 1:
+        raise ValueError("additional_cycles must be a positive integer")
+
+    verified = replay_survival(parent)
+    final_state = verified.final_state
+    finished_reason = final_state.get("finished_reason")
+    if finished_reason != "cycle_limit_reached":
+        raise ValueError(
+            "only a cycle_limit_reached survival result can be continued"
+        )
+
+    cycle = _strict_cycle_alias(final_state, context="parent final state")
+    observation_history = verified.initial_state.get("observation_history")
+    if observation_history is None:
+        history: list[dict[str, Any]] = []
+        event_sequence_offset = verified.event_sequence_base
+    elif isinstance(observation_history, list):
+        history = [dict(event) for event in observation_history]
+        event_sequence_offset = int(
+            verified.initial_state.get("event_sequence_offset", 0)
+        )
+    else:
+        raise TypeError("parent observation_history must be a list")
+    history.extend(dict(event) for event in verified.events)
+    expected_sequences = list(
+        range(
+            event_sequence_offset + 1,
+            event_sequence_offset + len(history) + 1,
+        )
+    )
+    actual_sequences = [int(event["sequence"]) for event in history]
+    if actual_sequences != expected_sequences:
+        raise ValueError("parent event history must have contiguous sequences")
+
+    snapshot = deepcopy(final_state)
+    config = SurvivalConfig(**dict(snapshot["config"]))
+    snapshot["config"] = replace(
+        config,
+        max_days=cycle + additional_cycles,
+    ).to_dict()
+    snapshot["finished_reason"] = None
+    snapshot["observation_history"] = history
+    snapshot["event_sequence_offset"] = event_sequence_offset
+    snapshot.pop("prior_public_record", None)
+    world = _world_from_snapshot(
+        snapshot,
+        event_sequence_offset=event_sequence_offset,
+    )
+    world.prior_public_record = _prior_public_record_from_result(
+        verified,
+        world,
+    )
+    last_sequence = event_sequence_offset + len(history)
+    for survivor in world.survivors.values():
+        survivor.last_observed_event_sequence = last_sequence
+    return world
+
+
+def adjust_shared_resource(
+    world: SurvivalWorld,
+    *,
+    resource: str,
+    stock: int,
+    reason: str,
+) -> SurvivalEvent:
+    if resource not in {"food", "wood"}:
+        raise ValueError("resource must be 'food' or 'wood'")
+    if isinstance(stock, bool) or not isinstance(stock, int):
+        raise TypeError("stock must be an integer")
+    if not isinstance(reason, str):
+        raise TypeError("reason must be a string")
+    if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", reason) is None:
+        raise ValueError(
+            "reason must be a 1-64 character lowercase identifier"
+        )
+    if world.finished:
+        raise RuntimeError(
+            f"survival world is already finished: {world.finished_reason}"
+        )
+    if world.slot != 0:
+        raise RuntimeError("shared resources can only be adjusted between cycles")
+    next_cycle = world.day + 1
+    if next_cycle > world.config.max_days:
+        raise RuntimeError("survival world has no remaining cycle")
+    if any(
+        event.day == next_cycle
+        and (event.slot != 0 or event.kind == "cycle_started")
+        for event in world.events
+    ):
+        raise RuntimeError("the next cycle has already started")
+    if any(
+        event.day == next_cycle
+        and event.slot == 0
+        and event.kind == "resource_adjusted"
+        and event.detail.get("resource") == resource
+        for event in world.events
+    ):
+        raise RuntimeError(
+            f"shared {resource} was already adjusted for cycle {next_cycle}"
+        )
+
+    capacity = int(getattr(world.resources, f"{resource}_capacity"))
+    if not 0 <= stock <= capacity:
+        raise ValueError(
+            f"shared {resource} stock must be between 0 and {capacity}"
+        )
+    before = int(getattr(world.resources, resource))
+    if stock == before:
+        raise ValueError(f"shared {resource} stock is already {stock}")
+    setattr(world.resources, resource, stock)
+    _emit(
+        world,
+        next_cycle,
+        0,
+        "resource_adjusted",
+        None,
+        resource=resource,
+        before=before,
+        after=stock,
+        delta=stock - before,
+        reason=reason,
+    )
+    return world.events[-1]
+
+
 def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
     survivor = world.survivors.get(name)
     if survivor is None:
@@ -150,6 +287,7 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
             living_peers=living_peers,
             max_food_eaten=config.max_food_eaten,
         ),
+        prior_public_record=world.prior_public_record,
     )
 
 
@@ -958,6 +1096,171 @@ def _choice_tape(events: Sequence[SurvivalEvent]) -> tuple[dict[str, Any], ...]:
     )
 
 
+def _prior_public_record_from_result(
+    result: SurvivalResult,
+    world: SurvivalWorld,
+) -> PriorPublicRecord:
+    cycle = _strict_cycle_alias(result.final_state, context="parent final state")
+    messages_by_speaker: dict[str, list[Mapping[str, Any]]] = {
+        name: [] for name in world.survivors
+    }
+    raw_messages = result.final_state.get("messages")
+    if not isinstance(raw_messages, list):
+        raise TypeError("parent final state messages must be a list")
+    for message in raw_messages:
+        if not isinstance(message, Mapping):
+            raise TypeError("parent final state message must be an object")
+        if _strict_cycle_alias(message, context="parent message") != cycle:
+            continue
+        if message.get("recipient") != "everyone":
+            continue
+        speaker = str(message.get("speaker", ""))
+        if speaker not in messages_by_speaker:
+            raise ValueError(f"parent message has unknown speaker {speaker!r}")
+        messages_by_speaker[speaker].append(message)
+
+    statements: list[PriorPublicStatement] = []
+    for survivor in sorted(
+        world.survivors.values(), key=lambda item: item.seat_id
+    ):
+        candidates = messages_by_speaker[survivor.name]
+        if not candidates:
+            raise ValueError(
+                f"parent cycle has no public broadcast from {survivor.name!r}"
+            )
+        selected = max(candidates, key=lambda item: int(item["sequence"]))
+        statements.append(
+            PriorPublicStatement(
+                message_id=str(selected["id"]),
+                sequence=int(selected["sequence"]),
+                cycle=cycle,
+                slot=int(selected["slot"]),
+                speaker=survivor.name,
+                recipient="everyone",
+                text=str(selected["text"]),
+            )
+        )
+
+    return PriorPublicRecord(
+        cycle=cycle,
+        statements=tuple(statements),
+        completed_resource_transfers=sum(
+            event["kind"] == "resource_given" for event in result.events
+        ),
+        shelters_built=sum(
+            event["kind"] == "shelter_built" for event in result.events
+        ),
+    )
+
+
+def _prior_public_record_from_dict(
+    value: object,
+    *,
+    survivor_names: set[str],
+    world_cycle: int,
+) -> PriorPublicRecord | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError("prior_public_record must be an object")
+    if set(value) != {
+        "cycle",
+        "selection_rule",
+        "statements",
+        "objective_totals",
+    }:
+        raise ValueError("prior_public_record has unexpected fields")
+    if value["selection_rule"] != "final_public_broadcast_per_identity":
+        raise ValueError("prior_public_record selection_rule is invalid")
+    cycle = value["cycle"]
+    if isinstance(cycle, bool) or not isinstance(cycle, int) or cycle < 1:
+        raise ValueError("prior_public_record cycle must be a positive integer")
+    if cycle != world_cycle:
+        raise ValueError("prior_public_record cycle must match the world cycle")
+
+    raw_statements = value["statements"]
+    if not isinstance(raw_statements, list):
+        raise TypeError("prior_public_record statements must be a list")
+    statements: list[PriorPublicStatement] = []
+    seen_speakers: set[str] = set()
+    expected_statement_fields = {
+        "cycle",
+        "message_id",
+        "sequence",
+        "slot",
+        "speaker",
+        "recipient",
+        "text",
+        "verification",
+    }
+    for raw_statement in raw_statements:
+        if not isinstance(raw_statement, Mapping):
+            raise TypeError("prior public statement must be an object")
+        if set(raw_statement) != expected_statement_fields:
+            raise ValueError("prior public statement has unexpected fields")
+        if raw_statement["verification"] != "unverified":
+            raise ValueError("prior public statement must be marked unverified")
+        message_id = raw_statement["message_id"]
+        if not isinstance(message_id, str) or not message_id:
+            raise ValueError("prior public statement message_id must be non-empty")
+        sequence = raw_statement["sequence"]
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence < 1
+        ):
+            raise ValueError("prior public statement sequence must be positive")
+        statement_cycle = raw_statement["cycle"]
+        slot = raw_statement["slot"]
+        if statement_cycle != cycle:
+            raise ValueError("prior public statement cycle does not match record")
+        if isinstance(slot, bool) or not isinstance(slot, int) or slot < 1:
+            raise ValueError("prior public statement slot must be positive")
+        speaker = raw_statement["speaker"]
+        if not isinstance(speaker, str) or speaker not in survivor_names:
+            raise ValueError("prior public statement has an unknown speaker")
+        if speaker in seen_speakers:
+            raise ValueError("prior public record has duplicate speakers")
+        if raw_statement["recipient"] != "everyone":
+            raise ValueError("prior public statement must be a broadcast")
+        text = raw_statement["text"]
+        if not isinstance(text, str) or not text:
+            raise ValueError("prior public statement text must be non-empty")
+        seen_speakers.add(speaker)
+        statements.append(
+            PriorPublicStatement(
+                message_id=message_id,
+                sequence=sequence,
+                cycle=cycle,
+                slot=slot,
+                speaker=speaker,
+                recipient="everyone",
+                text=text,
+            )
+        )
+    if seen_speakers != survivor_names:
+        raise ValueError("prior public record must contain every survivor")
+
+    objective_totals = value["objective_totals"]
+    if not isinstance(objective_totals, Mapping) or set(objective_totals) != {
+        "completed_resource_transfers",
+        "shelters_built",
+    }:
+        raise ValueError("prior_public_record objective_totals are invalid")
+    totals: dict[str, int] = {}
+    for key in ("completed_resource_transfers", "shelters_built"):
+        total = objective_totals[key]
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise ValueError(f"prior_public_record {key} must be non-negative")
+        totals[key] = total
+    return PriorPublicRecord(
+        cycle=cycle,
+        statements=tuple(statements),
+        completed_resource_transfers=totals["completed_resource_transfers"],
+        shelters_built=totals["shelters_built"],
+    )
+
+
 def _world_from_snapshot(
     snapshot: Mapping[str, Any],
     *,
@@ -1019,6 +1322,12 @@ def _world_from_snapshot(
         if observation_history is not None
         else event_sequence_offset
     )
+    world_cycle = _strict_cycle_alias(snapshot, context="world snapshot")
+    prior_public_record = _prior_public_record_from_dict(
+        snapshot.get("prior_public_record"),
+        survivor_names=set(survivors),
+        world_cycle=world_cycle,
+    )
     return SurvivalWorld(
         config=config,
         seed=int(snapshot["seed"]),
@@ -1029,7 +1338,7 @@ def _world_from_snapshot(
             wood=int(resources_data["wood"]),
             wood_capacity=int(resources_data["wood_capacity"]),
         ),
-        day=_strict_cycle_alias(snapshot, context="world snapshot"),
+        day=world_cycle,
         slot=int(snapshot.get("slot", 0)),
         messages=messages,
         events=events,
@@ -1039,6 +1348,7 @@ def _world_from_snapshot(
             if snapshot["finished_reason"] is not None
             else None
         ),
+        prior_public_record=prior_public_record,
     )
 
 
@@ -1104,6 +1414,13 @@ def _event_for_view(
         return None
     if event.actor == viewer:
         return event.to_dict()
+    if event.kind == "resource_adjusted":
+        rendered = event.to_dict()
+        rendered["detail"] = {
+            key: event.detail[key]
+            for key in ("resource", "before", "after", "delta")
+        }
+        return rendered
     if event.kind == "resource_given" and event.detail.get("target") == viewer:
         return event.to_dict()
     if event.kind in {

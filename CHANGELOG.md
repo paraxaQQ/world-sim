@@ -1,5 +1,15 @@
 # changelog
 
+## 0.9.0 - 2026-08-13
+
+- add verified live continuation from an exact completed parent artifact instead of recreating prior cycles
+- carry forward identity, private state, messages, event history, and deterministic replay into cycle 2
+- expose a frozen public record containing each identity's final prior broadcast as an unverified statement plus engine-counted transfer and shelter totals
+- add strict between-cycle shared-resource adjustments with explicit before, after, delta, and audit identifiers
+- derive model assignments from the parent, price the reconstructed first views, and retain format-v4 parent, transition, public-record, checkpoint, and outcome receipts
+- add `continue-live` with no model override and objective transfer-to-shelter metrics
+- name a fresh nonbehavioral adapter qualification for the changed production source
+
 ## 0.8.1 - 2026-08-13
 
 - atomically checkpoint live survival artifacts before and after every provider call

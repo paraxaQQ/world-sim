@@ -59,9 +59,11 @@ def render_turn_prompt(view: SurvivorView) -> str:
         separators=(",", ":"),
         sort_keys=True,
     )
+    prior_public_record = _render_prior_public_record(view)
     return f"""cycle {view.day}, chance {view.slot} of {rules["slots_per_cycle"]}
 
 you have {view.slots_remaining} chance(s) left in this cycle, including this one.
+{prior_public_record}
 
 you:
 - name: {view.name}
@@ -102,6 +104,27 @@ optional speech costs {rules["speech_energy_cost"]} energy and is capped at {rul
 
 response JSON schema (your response must validate exactly):
 {schema}"""
+
+
+def _render_prior_public_record(view: SurvivorView) -> str:
+    record = view.prior_public_record
+    if record is None:
+        return ""
+    statement_lines = [
+        f"- cycle {statement.cycle}, chance {statement.slot}; "
+        f"{statement.speaker} to everyone: "
+        f"{json.dumps(statement.text, ensure_ascii=False)}"
+        for statement in record.statements
+    ]
+    statements = "\n".join(statement_lines)
+    return f"""
+prior public record from cycle {record.cycle}:
+- selection rule: final public statement from each person in the prior cycle
+- the quoted statements are unverified; they are shown exactly as spoken
+{statements}
+- engine-counted completed resource transfers: {record.completed_resource_transfers}
+- engine-counted shelters built: {record.shelters_built}
+""".rstrip()
 
 
 def response_schema(view: SurvivorView) -> dict[str, Any]:

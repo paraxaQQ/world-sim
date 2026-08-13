@@ -6,6 +6,7 @@ import json
 import os
 import platform
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -15,11 +16,20 @@ from .survival.calibration import LEAN_CAMP_V1, survival_preset
 from .survival.demo import result_sha256, survival_metrics
 from .survival.engine import (
     SurvivalChoiceProvider,
+    adjust_shared_resource,
+    continue_survival_world,
     make_survival_world,
+    replay_survival,
     run_survival,
     survival_view_for,
 )
-from .survival.models import DEFAULT_SURVIVOR_NAMES, SurvivalConfig, SurvivorView
+from .survival.models import (
+    DEFAULT_SURVIVOR_NAMES,
+    SurvivalConfig,
+    SurvivalResult,
+    SurvivalWorld,
+    SurvivorView,
+)
 from .survival.prompt import render_system_prompt, render_turn_prompt, response_schema
 from .survival.protocol import (
     MODEL_MAX_COMPLETION_TOKENS,
@@ -27,9 +37,8 @@ from .survival.protocol import (
     parse_strict_model_json,
 )
 
-
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.8.1"
+WORLD_SIM_VERSION = "0.9.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -46,7 +55,7 @@ PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("1.20")
 QUALIFICATION_MAX_AUTHORIZATION_USD = Decimal("0.30")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 USD_COST_TICKS_PER_USD = Decimal("10000000000")
-QUALIFICATION_ID = "paid-panel-qualification-002"
+QUALIFICATION_ID = "paid-panel-qualification-003"
 QUALIFICATION_PROTOCOL = "world-sim-adapter-v1"
 QUALIFICATION_SYSTEM_PROMPT = (
     "You are performing an API compatibility check, not a game or decision task.\n"
@@ -803,6 +812,334 @@ def run_live_survival(
     )
 
 
+def run_live_survival_continuation(
+    *,
+    parent_path: Path,
+    expected_parent_sha256: str,
+    additional_cycles: int = 1,
+    shared_resource: str = "wood",
+    shared_stock: int = 0,
+    transition_reason: str,
+    max_calls: int = DEFAULT_LIVE_MAX_CALLS,
+    max_completion_tokens: int = DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
+    temperature: float = DEFAULT_LIVE_TEMPERATURE,
+    reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
+    max_paid_usd: Decimal | str | None = None,
+    timeout_seconds: float = DEFAULT_LIVE_TIMEOUT_SECONDS,
+    require_complete_budget: bool = False,
+    transport: ChatTransport | None = None,
+    auth_path: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    checkpoint: Callable[[Mapping[str, object]], None] | None = None,
+) -> dict[str, Any]:
+    parent_artifact, parent_result, parent_sha256 = _load_verified_parent_artifact(
+        parent_path,
+        expected_sha256=expected_parent_sha256,
+    )
+    assignments = _verified_parent_assignments(parent_artifact, parent_result)
+    world = continue_survival_world(
+        parent_result,
+        additional_cycles=additional_cycles,
+    )
+    transition_event = adjust_shared_resource(
+        world,
+        resource=shared_resource,
+        stock=shared_stock,
+        reason=transition_reason,
+    )
+    active_names = set(world.alive_names())
+    active_assignments = tuple(
+        assignment
+        for assignment in assignments
+        if assignment.public_name in active_names
+    )
+    if not active_assignments:
+        raise ValueError("the verified parent has no living model seats to continue")
+    _validate_limits(
+        len(active_assignments),
+        additional_cycles,
+        world.config.slots_per_cycle,
+        max_calls,
+        max_completion_tokens,
+        temperature,
+        timeout_seconds,
+        require_complete_budget,
+    )
+    if reasoning_effort not in LIVE_REASONING_EFFORTS:
+        raise ValueError(
+            "reasoning_effort must be one of " + ", ".join(LIVE_REASONING_EFFORTS)
+        )
+    paid_assignments = tuple(
+        assignment
+        for assignment in active_assignments
+        if assignment.endpoint.provider == "opencode-paid"
+    )
+    if (
+        reasoning_effort == "compatibility-first"
+        and len(paid_assignments) != len(active_assignments)
+    ):
+        raise ValueError("reasoning_effort compatibility-first requires a paid-only run")
+    paid_limit, paid_preflight = _paid_preflight(
+        assignments=paid_assignments,
+        all_assignments=active_assignments,
+        seed=world.seed,
+        days=additional_cycles,
+        world_config=world.config,
+        max_calls=max_calls,
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        reasoning_effort=(
+            None if reasoning_effort == "provider-default" else reasoning_effort
+        ),
+        max_paid_usd=max_paid_usd,
+        require_complete_budget=require_complete_budget,
+        preflight_world=world,
+    )
+
+    active_environ = os.environ if environ is None else environ
+    zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
+    if paid_assignments and zen_key is None:
+        raise ValueError("paid Zen models require OPENCODE_ZEN_API_KEY")
+    go_key = (
+        load_opencode_go_api_key(auth_path=auth_path, environ=environ)
+        if any(
+            assignment.endpoint.provider == "opencode-go"
+            for assignment in active_assignments
+        )
+        else None
+    )
+
+    calls: list[dict[str, Any]] = []
+    paid_budget = _PaidBudget(paid_limit) if paid_limit is not None else None
+    active_transport = transport or StdlibChatTransport()
+    parent_canonical_sha256 = str(parent_artifact["canonical_result_sha256"])
+    public_record = world.prior_public_record
+    if public_record is None:
+        raise RuntimeError("continued survival world has no prior public record")
+    continuation_link = {
+        "parent_artifact_name": parent_path.name,
+        "parent_artifact_sha256": parent_sha256,
+        "parent_canonical_result_sha256": parent_canonical_sha256,
+        "parent_format_version": 3,
+        "parent_mode": "live_named_survival",
+    }
+    transition_receipt = {
+        "method": "deterministic_between_cycle_shared_resource_adjustment",
+        "event": transition_event.to_dict(),
+    }
+    public_record_receipt = {
+        "method": "final_public_broadcast_per_identity_verbatim",
+        "statement_status": "unverified",
+        "objective_totals_source": "verified_parent_engine_events",
+        "record": public_record.to_dict(),
+    }
+    base = {
+        "format_version": 4,
+        "mode": "live_named_survival_continuation",
+        "adapter": ADAPTER_NAME,
+        "source": {
+            "world_sim_version": WORLD_SIM_VERSION,
+            "python_version": platform.python_version(),
+            "platform_system": platform.system(),
+            "cli_sha256": _module_sha256(Path(__file__).with_name("cli.py")),
+            "model_host_sha256": _module_sha256(Path(__file__)),
+            "demo_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "demo.py"
+            ),
+            "engine_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "engine.py"
+            ),
+            "models_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "models.py"
+            ),
+            "prompt_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "prompt.py"
+            ),
+            "protocol_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "protocol.py"
+            ),
+            "calibration_sha256": _module_sha256(
+                Path(__file__).with_name("survival") / "calibration.py"
+            ),
+        },
+        "continuation_link": continuation_link,
+        "transition_receipt": transition_receipt,
+        "public_record_receipt": public_record_receipt,
+        "config": {
+            "seed": world.seed,
+            "days_requested": additional_cycles,
+            "cycles_requested": additional_cycles,
+            "starting_cycle": world.day + 1,
+            "ending_cycle": world.day + additional_cycles,
+            "slots_per_cycle": world.config.slots_per_cycle,
+            "world_preset": parent_artifact["config"]["world_preset"],
+            "calibration_scope": "verified_parent_continuation",
+            "world_config": world.config.to_dict(),
+            "max_calls": max_calls,
+            "require_complete_budget": require_complete_budget,
+            "max_completion_tokens": max_completion_tokens,
+            "temperature": temperature,
+            "reasoning_effort": reasoning_effort,
+            "max_paid_usd": (
+                _decimal_text(paid_limit) if paid_limit is not None else None
+            ),
+            "timeout_seconds": timeout_seconds,
+        },
+        "paid_preflight": paid_preflight,
+        "authentication": {
+            provider: (
+                "bearer"
+                if (
+                    provider in {"opencode", "opencode-paid"}
+                    and zen_key is not None
+                )
+                or (provider == "opencode-go" and go_key is not None)
+                else "none"
+            )
+            for provider in sorted(
+                {
+                    assignment.endpoint.provider
+                    for assignment in active_assignments
+                }
+            )
+        },
+        "seat_assignments": [assignment.to_dict() for assignment in assignments],
+        "calls": calls,
+    }
+    initial_state = world.to_dict(include_events=False)
+
+    def running_artifact() -> dict[str, Any]:
+        return {
+            **base,
+            "status": "running",
+            "initial_state": initial_state,
+            "partial_state": world.to_dict(),
+            "provider_summary": _provider_summary(calls),
+        }
+
+    def checkpoint_running() -> None:
+        if checkpoint is not None:
+            checkpoint(running_artifact())
+
+    def finish(payload: dict[str, Any]) -> dict[str, Any]:
+        if checkpoint is not None:
+            checkpoint(payload)
+        return payload
+
+    providers = {
+        assignment.public_name: _LiveProvider(
+            assignment=assignment,
+            transport=active_transport,
+            api_key=(
+                go_key if assignment.endpoint.provider == "opencode-go" else zen_key
+            ),
+            timeout_seconds=timeout_seconds,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            reasoning_effort=(
+                None if reasoning_effort == "provider-default" else reasoning_effort
+            ),
+            max_calls=max_calls,
+            calls=calls,
+            paid_budget=(
+                paid_budget
+                if assignment.endpoint.provider == "opencode-paid"
+                else None
+            ),
+            checkpoint=checkpoint_running if checkpoint is not None else None,
+        )
+        for assignment in active_assignments
+    }
+    checkpoint_running()
+    try:
+        result = run_survival(world, providers, days=additional_cycles)
+    except RuntimeError as error:
+        if isinstance(error.__cause__, LivePaidBudgetFailure):
+            failure = error.__cause__
+            return finish(
+                {
+                    **base,
+                    "status": "failed",
+                    "failure": {
+                        "call_sequence": None,
+                        "day": failure.view.day,
+                        "cycle": failure.view.day,
+                        "slot": failure.view.slot,
+                        "seat_id": world.survivors[failure.public_name].seat_id,
+                        "public_name": failure.public_name,
+                        "model": providers[
+                            failure.public_name
+                        ].assignment.model_ref,
+                        "kind": "paid_budget_exhausted",
+                        "message": str(failure),
+                        "http_status": None,
+                        "cost_authorization": failure.authorization,
+                    },
+                    "initial_state": initial_state,
+                    "partial_state": world.to_dict(),
+                    "provider_summary": _provider_summary(calls),
+                }
+            )
+        if isinstance(error.__cause__, LiveCallCapFailure):
+            failure = error.__cause__
+            return finish(
+                {
+                    **base,
+                    "status": "failed",
+                    "failure": {
+                        "call_sequence": None,
+                        "day": failure.view.day,
+                        "cycle": failure.view.day,
+                        "slot": failure.view.slot,
+                        "seat_id": world.survivors[failure.public_name].seat_id,
+                        "public_name": failure.public_name,
+                        "model": providers[
+                            failure.public_name
+                        ].assignment.model_ref,
+                        "kind": "call_cap_reached",
+                        "message": str(failure),
+                        "http_status": None,
+                    },
+                    "initial_state": initial_state,
+                    "partial_state": world.to_dict(),
+                    "provider_summary": _provider_summary(calls),
+                }
+            )
+        if not isinstance(error.__cause__, LiveCallFailure):
+            raise
+        failed = calls[-1]
+        return finish(
+            {
+                **base,
+                "status": "failed",
+                "failure": {
+                    "call_sequence": failed["sequence"],
+                    "day": failed["day"],
+                    "cycle": failed["cycle"],
+                    "slot": failed["slot"],
+                    "seat_id": failed["seat_id"],
+                    "public_name": failed["public_name"],
+                    "model": failed["model"],
+                    **failed["error"],
+                },
+                "initial_state": initial_state,
+                "partial_state": world.to_dict(),
+                "provider_summary": _provider_summary(calls),
+            }
+        )
+    return finish(
+        {
+            **base,
+            "status": "completed",
+            "canonical_result_sha256": result_sha256(result),
+            "metrics": survival_metrics(result),
+            "session_outcomes": _continuation_outcomes(result),
+            "provider_summary": _provider_summary(calls),
+            "result": result.to_dict(),
+        }
+    )
+
+
 def run_paid_adapter_qualification(
     *,
     model_refs: Sequence[str],
@@ -1467,6 +1804,7 @@ def _paid_preflight(
     reasoning_effort: str | None,
     max_paid_usd: Decimal | str | None,
     require_complete_budget: bool,
+    preflight_world: SurvivalWorld | None = None,
 ) -> tuple[Decimal | None, dict[str, object] | None]:
     if not assignments:
         if max_paid_usd is not None:
@@ -1492,12 +1830,17 @@ def _paid_preflight(
         raise ValueError(
             "paid complete-cycle runs require --require-complete-budget"
         )
-    names = tuple(assignment.public_name for assignment in all_assignments)
-    world = make_survival_world(
-        names,
-        seed=seed,
-        config=world_config,
-    )
+    if preflight_world is None:
+        names = tuple(assignment.public_name for assignment in all_assignments)
+        world = make_survival_world(
+            names,
+            seed=seed,
+            config=world_config,
+        )
+    else:
+        if preflight_world.seed != seed or preflight_world.config != world_config:
+            raise ValueError("paid preflight world does not match the run configuration")
+        world = deepcopy(preflight_world)
     rows: list[dict[str, str | int]] = []
     total = Decimal("0")
     for assignment in assignments:
@@ -1547,6 +1890,332 @@ def _paid_preflight(
         "authorized_calls": max_calls,
         "world_max_calls": world_max_calls,
         "first_chance_cost_bound_usd": _decimal_text(total),
+    }
+
+
+def _load_verified_parent_artifact(
+    parent_path: Path,
+    *,
+    expected_sha256: str,
+) -> tuple[dict[str, Any], SurvivalResult, str]:
+    if (
+        len(expected_sha256) != 64
+        or expected_sha256 != expected_sha256.lower()
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise ValueError("expected_parent_sha256 must be a lowercase SHA-256 hex digest")
+    try:
+        raw = parent_path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"cannot read parent artifact from {parent_path}") from error
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            "parent artifact SHA-256 mismatch: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("parent artifact is not valid UTF-8") from error
+    try:
+        loaded = _strict_json(text)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError("parent artifact is not valid strict JSON") from error
+    if not isinstance(loaded, Mapping):
+        raise ValueError("parent artifact must be an object")
+    artifact = deepcopy(dict(loaded))
+    if artifact.get("format_version") != 3:
+        raise ValueError("parent artifact must use format_version 3")
+    if artifact.get("mode") != "live_named_survival":
+        raise ValueError("parent artifact must be a live_named_survival run")
+    if artifact.get("status") != "completed":
+        raise ValueError("parent artifact must be completed")
+    result_payload = artifact.get("result")
+    if not isinstance(result_payload, Mapping):
+        raise ValueError("completed parent artifact has no result object")
+    parent_result = _survival_result_from_mapping(result_payload)
+    canonical_sha256 = artifact.get("canonical_result_sha256")
+    if not isinstance(canonical_sha256, str) or result_sha256(parent_result) != canonical_sha256:
+        raise ValueError("parent canonical result SHA-256 does not match its result")
+    replayed = replay_survival(parent_result)
+    if result_sha256(replayed) != canonical_sha256:
+        raise ValueError("parent exact replay changed its canonical result SHA-256")
+    return artifact, replayed, actual_sha256
+
+
+def _survival_result_from_mapping(payload: Mapping[str, object]) -> SurvivalResult:
+    expected_keys = {
+        "initial_state",
+        "final_state",
+        "events",
+        "choice_tape",
+        "event_sequence_base",
+    }
+    if set(payload) != expected_keys:
+        raise ValueError("parent result has unexpected fields")
+    initial_state = payload["initial_state"]
+    final_state = payload["final_state"]
+    events = payload["events"]
+    choice_tape = payload["choice_tape"]
+    event_sequence_base = payload["event_sequence_base"]
+    if not isinstance(initial_state, Mapping) or not isinstance(final_state, Mapping):
+        raise ValueError("parent result states must be objects")
+    if not isinstance(events, list) or not all(
+        isinstance(event, Mapping) for event in events
+    ):
+        raise ValueError("parent result events must be a list of objects")
+    if not isinstance(choice_tape, list) or not all(
+        isinstance(record, Mapping) for record in choice_tape
+    ):
+        raise ValueError("parent choice tape must be a list of objects")
+    if isinstance(event_sequence_base, bool) or not isinstance(
+        event_sequence_base, int
+    ):
+        raise ValueError("parent event_sequence_base must be an integer")
+    return SurvivalResult(
+        initial_state=deepcopy(dict(initial_state)),
+        final_state=deepcopy(dict(final_state)),
+        events=tuple(deepcopy(dict(event)) for event in events),
+        choice_tape=tuple(deepcopy(dict(record)) for record in choice_tape),
+        event_sequence_base=event_sequence_base,
+    )
+
+
+def _verified_parent_assignments(
+    artifact: Mapping[str, object],
+    result: SurvivalResult,
+) -> tuple[_Assignment, ...]:
+    raw_assignments = artifact.get("seat_assignments")
+    if not isinstance(raw_assignments, list) or not all(
+        isinstance(row, Mapping) for row in raw_assignments
+    ):
+        raise ValueError("parent seat_assignments must be a list of objects")
+    model_refs: list[str] = []
+    for row in raw_assignments:
+        if set(row) != {"seat_id", "public_name", "model"}:
+            raise ValueError("parent seat assignment has unexpected fields")
+        model = row["model"]
+        if not isinstance(model, str):
+            raise ValueError("parent seat assignment model must be text")
+        model_refs.append(model)
+    assignments = _assign_models(model_refs)
+    if [assignment.to_dict() for assignment in assignments] != [
+        dict(row) for row in raw_assignments
+    ]:
+        raise ValueError("parent seat/name/model mapping is not exact")
+
+    expected_seats = [
+        (assignment.seat_id, assignment.public_name) for assignment in assignments
+    ]
+    for state_name, state in (
+        ("initial_state", result.initial_state),
+        ("final_state", result.final_state),
+    ):
+        survivors = state.get("survivors")
+        if not isinstance(survivors, list) or not all(
+            isinstance(survivor, Mapping) for survivor in survivors
+        ):
+            raise ValueError(f"parent {state_name} survivors must be a list of objects")
+        actual_seats = [
+            (str(survivor.get("seat_id")), str(survivor.get("name")))
+            for survivor in survivors
+        ]
+        if actual_seats != expected_seats:
+            raise ValueError(f"parent {state_name} seat/name mapping is not exact")
+
+    config = artifact.get("config")
+    if not isinstance(config, Mapping):
+        raise ValueError("parent config must be an object")
+    if not isinstance(config.get("world_preset"), str):
+        raise ValueError("parent config has no world_preset")
+    seed = config.get("seed")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("parent config seed must be an integer")
+    if result.initial_state.get("seed") != seed or result.final_state.get("seed") != seed:
+        raise ValueError("parent config seed does not match its result")
+
+    assignment_by_seat = {
+        assignment.seat_id: assignment for assignment in assignments
+    }
+    calls = artifact.get("calls")
+    if not isinstance(calls, list) or not all(isinstance(call, Mapping) for call in calls):
+        raise ValueError("parent calls must be a list of objects")
+    for sequence, call in enumerate(calls, start=1):
+        if call.get("sequence") != sequence or call.get("status") != "succeeded":
+            raise ValueError("completed parent calls must be contiguous and succeeded")
+        seat_id = call.get("seat_id")
+        if not isinstance(seat_id, str) or seat_id not in assignment_by_seat:
+            raise ValueError("parent call refers to an unknown seat")
+        assignment = assignment_by_seat[seat_id]
+        if (
+            call.get("public_name") != assignment.public_name
+            or call.get("model") != assignment.model_ref
+        ):
+            raise ValueError("parent call seat/name/model mapping is not exact")
+    return assignments
+
+
+def _continuation_outcomes(result: SurvivalResult) -> dict[str, object]:
+    transfers = [
+        event for event in result.events if event.get("kind") == "resource_given"
+    ]
+    wood_gifts = [
+        event
+        for event in transfers
+        if isinstance(event.get("detail"), Mapping)
+        and event["detail"].get("resource") == "wood"
+    ]
+    completed_wood_gifts = [
+        {
+            "sequence": int(event["sequence"]),
+            "cycle": int(event["cycle"]),
+            "chance": int(event["slot"]),
+            "giver": str(event["actor"]),
+            "recipient": str(event["detail"]["target"]),
+            "amount": int(event["detail"]["amount"]),
+        }
+        for event in wood_gifts
+    ]
+    completed_gift_keys = {
+        (int(event["cycle"]), int(event["slot"]), str(event["actor"]))
+        for event in transfers
+    }
+    rejection_reasons = {
+        (int(event["cycle"]), int(event["slot"]), str(event["actor"])): str(
+            event["detail"]["reason"]
+        )
+        for event in result.events
+        if event.get("kind") == "action_resolution_rejected"
+        and isinstance(event.get("detail"), Mapping)
+        and "reason" in event["detail"]
+    }
+    failed_paid_transfer_attempts = [
+        {
+            "sequence": int(event["sequence"]),
+            "cycle": int(event["cycle"]),
+            "chance": int(event["slot"]),
+            "giver": str(event["actor"]),
+            "action": str(event["detail"]["action"]),
+            "energy_paid": int(event["detail"]["action_cost"]),
+            "resolution_rejection_reason": rejection_reasons.get(
+                (int(event["cycle"]), int(event["slot"]), str(event["actor"]))
+            ),
+        }
+        for event in result.events
+        if event.get("kind") == "choice_energy_paid"
+        and isinstance(event.get("detail"), Mapping)
+        and event["detail"].get("action") in {"give_food", "give_wood"}
+        and int(event["detail"].get("action_cost", 0)) > 0
+        and (
+            int(event["cycle"]),
+            int(event["slot"]),
+            str(event["actor"]),
+        )
+        not in completed_gift_keys
+    ]
+    initial_survivors = result.initial_state["survivors"]
+    names = [str(survivor["name"]) for survivor in initial_survivors]
+    initial_wood = {
+        str(survivor["name"]): int(survivor["wood"])
+        for survivor in initial_survivors
+    }
+    gathered = {name: 0 for name in names}
+    sent = {name: 0 for name in names}
+    received = {name: 0 for name in names}
+    inbound_gifts: dict[str, list[dict[str, int | str]]] = {
+        name: [] for name in names
+    }
+    shelter_cost = int(result.initial_state["config"]["shelter_wood_cost"])
+    enabling: list[dict[str, object]] = []
+    shelters: list[dict[str, int | str]] = []
+    for event in result.events:
+        kind = event["kind"]
+        actor = event["actor"]
+        detail = event["detail"]
+        if kind == "wood_gathered" and isinstance(actor, str):
+            gathered[actor] += int(detail["wood_gathered"])
+        elif kind == "resource_given" and detail.get("resource") == "wood":
+            giver = str(actor)
+            recipient = str(detail["target"])
+            amount = int(detail["amount"])
+            sent[giver] += amount
+            received[recipient] += amount
+            inbound_gifts[recipient].append(
+                {
+                    "sequence": int(event["sequence"]),
+                    "cycle": int(event["cycle"]),
+                    "chance": int(event["slot"]),
+                    "giver": giver,
+                    "amount": amount,
+                }
+            )
+        elif kind == "shelter_built" and isinstance(actor, str):
+            shelter = {
+                "sequence": int(event["sequence"]),
+                "cycle": int(event["cycle"]),
+                "chance": int(event["slot"]),
+                "builder": actor,
+            }
+            shelters.append(shelter)
+            non_inbound_wood = max(
+                0,
+                initial_wood[actor] + gathered[actor] - sent[actor],
+            )
+            minimum_inbound_required = max(0, shelter_cost - non_inbound_wood)
+            contributing = [
+                gift
+                for gift in inbound_gifts[actor]
+                if int(gift["sequence"]) < int(event["sequence"])
+            ]
+            contributed = sum(int(gift["amount"]) for gift in contributing)
+            if minimum_inbound_required > 0 and contributed >= minimum_inbound_required:
+                enabling.append(
+                    {
+                        **shelter,
+                        "inbound_wood_before_build": contributed,
+                        "minimum_inbound_wood_required": minimum_inbound_required,
+                        "completed_gifts": contributing,
+                    }
+                )
+
+    give_cost = int(result.initial_state["config"]["give_energy_cost"])
+    costly_transfer_count = len(transfers) if give_cost > 0 else 0
+    primary_chains = [chain for chain in enabling if int(chain["chance"]) <= 3]
+    reciprocal_pairs: list[dict[str, str]] = []
+    reciprocal_seen: set[tuple[str, str]] = set()
+    gift_directions = {
+        (str(gift["giver"]), str(gift["recipient"]))
+        for gift in completed_wood_gifts
+    }
+    for giver, recipient in sorted(gift_directions):
+        normalized = tuple(sorted((giver, recipient)))
+        if (
+            (recipient, giver) in gift_directions
+            and normalized not in reciprocal_seen
+        ):
+            reciprocal_seen.add(normalized)
+            reciprocal_pairs.append(
+                {"first_survivor": normalized[0], "second_survivor": normalized[1]}
+            )
+    builders = {str(shelter["builder"]) for shelter in shelters}
+    return {
+        "completed_resource_transfers": len(transfers),
+        "completed_costly_resource_transfers": costly_transfer_count,
+        "any_completed_costly_resource_transfer": costly_transfer_count > 0,
+        "completed_wood_gifts": completed_wood_gifts,
+        "failed_paid_transfer_attempts": failed_paid_transfer_attempts,
+        "wood_received": received,
+        "wood_gifts_without_later_shelter": [
+            gift
+            for gift in completed_wood_gifts
+            if str(gift["recipient"]) not in builders
+        ],
+        "reciprocal_wood_transfer_pairs": reciprocal_pairs,
+        "shelters_built": shelters,
+        "shelter_enabling_wood": enabling,
+        "primary_shelter_chain_by_end_of_chance_3": bool(primary_chains),
+        "primary_shelter_chains": primary_chains,
     }
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-
 DEFAULT_SURVIVOR_NAMES: tuple[str, ...] = (
     "Aster",
     "Birch",
@@ -274,6 +273,48 @@ class SurvivalEvent:
 
 
 @dataclass(frozen=True)
+class PriorPublicStatement:
+    message_id: str
+    sequence: int
+    cycle: int
+    slot: int
+    speaker: str
+    recipient: str
+    text: str
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "message_id": self.message_id,
+            "sequence": self.sequence,
+            "cycle": self.cycle,
+            "slot": self.slot,
+            "speaker": self.speaker,
+            "recipient": self.recipient,
+            "text": self.text,
+            "verification": "unverified",
+        }
+
+
+@dataclass(frozen=True)
+class PriorPublicRecord:
+    cycle: int
+    statements: tuple[PriorPublicStatement, ...]
+    completed_resource_transfers: int
+    shelters_built: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle": self.cycle,
+            "selection_rule": "final_public_broadcast_per_identity",
+            "statements": [statement.to_dict() for statement in self.statements],
+            "objective_totals": {
+                "completed_resource_transfers": self.completed_resource_transfers,
+                "shelters_built": self.shelters_built,
+            },
+        }
+
+
+@dataclass(frozen=True)
 class SurvivorView:
     name: str
     day: int
@@ -286,9 +327,10 @@ class SurvivorView:
     recent_events: tuple[dict[str, Any], ...]
     rules: dict[str, Any]
     allowed_actions: tuple[dict[str, Any], ...]
+    prior_public_record: PriorPublicRecord | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "name": self.name,
             "day": self.day,
             "cycle": self.day,
@@ -302,6 +344,9 @@ class SurvivorView:
             "rules": self.rules,
             "allowed_actions": list(self.allowed_actions),
         }
+        if self.prior_public_record is not None:
+            payload["prior_public_record"] = self.prior_public_record.to_dict()
+        return payload
 
 
 @dataclass
@@ -316,6 +361,7 @@ class SurvivalWorld:
     events: list[SurvivalEvent] = field(default_factory=list)
     event_sequence_offset: int = 0
     finished_reason: str | None = None
+    prior_public_record: PriorPublicRecord | None = None
 
     @property
     def finished(self) -> bool:
@@ -349,6 +395,8 @@ class SurvivalWorld:
         }
         if include_events:
             payload["events"] = [event.to_dict() for event in self.events]
+        if self.prior_public_record is not None:
+            payload["prior_public_record"] = self.prior_public_record.to_dict()
         return payload
 
 
