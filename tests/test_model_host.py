@@ -165,6 +165,29 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(original.to_dict(), replay_survival(original).to_dict())
         self.assertEqual(len(transport.requests), 6)
 
+    def test_free_pool_key_is_optional_and_never_enters_artifact(self) -> None:
+        secret = "zen-key-not-for-the-artifact"
+        transport = FakeTransport(
+            [
+                response('{"action":{"kind":"rest"},"say":null}'),
+                response('{"action":{"kind":"rest"},"say":null}'),
+            ]
+        )
+        artifact = run_live_survival(
+            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            days=1,
+            max_calls=2,
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": f" {secret} "},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(
+            [request["api_key"] for request in transport.requests],
+            [secret, secret],
+        )
+        self.assertNotIn(secret, json.dumps(artifact))
+
     def test_bad_model_json_is_one_paid_rest_without_retry(self) -> None:
         transport = FakeTransport(
             [

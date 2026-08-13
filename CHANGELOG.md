@@ -1,5 +1,10 @@
 # changelog
 
+## 0.4.1 - 2026-08-12
+
+- allow authenticated access to `-free` OpenCode Zen models through the optional `OPENCODE_ZEN_API_KEY` environment variable.
+- keep anonymous free-model access as the default and exclude the key from run artifacts.
+
 ## 0.4.0 - 2026-08-12
 
 - add a direct, capability-free adapter for OpenCode's free and Go chat-completions endpoints.

@@ -94,7 +94,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.4.0",
+            "User-Agent": "world-sim/0.4.1",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -294,6 +294,8 @@ def run_live_survival(
         temperature,
         timeout_seconds,
     )
+    active_environ = os.environ if environ is None else environ
+    zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
     go_key = (
         load_opencode_go_api_key(auth_path=auth_path, environ=environ)
         if any(assignment.endpoint.requires_api_key for assignment in assignments)
@@ -305,7 +307,7 @@ def run_live_survival(
         assignment.public_name: _LiveProvider(
             assignment=assignment,
             transport=active_transport,
-            api_key=go_key if assignment.endpoint.requires_api_key else None,
+            api_key=go_key if assignment.endpoint.requires_api_key else zen_key,
             timeout_seconds=timeout_seconds,
             max_completion_tokens=max_completion_tokens,
             temperature=temperature,

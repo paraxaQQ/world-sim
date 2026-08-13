@@ -85,7 +85,7 @@ py -3.11 -m world_sim survive-live `
 
 Each repeated `--model` value fills the next hidden seat: Aster, then Birch, then Cinder, up to eight survivors. A three-day, two-model run can make at most six calls, so the command rejects a lower `--max-calls` value before it contacts a provider. The output file is required because a failed provider call can happen after earlier calls have already completed.
 
-The `opencode` route accepts only `-free` models and sends no credential. To use the paid OpenCode Go route, pass a model such as `opencode-go/mimo-v2.5`. The adapter reads `OPENCODE_API_KEY` first, then the existing OpenCode `auth.json`. It never puts the key or authorization header in the artifact.
+The `opencode` route accepts only `-free` models. It runs anonymously unless `OPENCODE_ZEN_API_KEY` is set, which can provide authenticated access to the same free models. To use the paid OpenCode Go route, pass a model such as `opencode-go/mimo-v2.5`. The adapter reads `OPENCODE_API_KEY` first, then the existing OpenCode `auth.json`. It never puts either key or an authorization header in the artifact.
 
 ## model boundary
 
