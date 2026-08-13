@@ -109,3 +109,59 @@ No survivor selected a transfer. All chance-1 choices came from frozen simultane
 ### claim boundary
 
 Session 2 is one exploratory continuation chosen after session 1. It has no no-memory control or replicate seeds. It shows a spoken solution followed by no costly transfer under one fragile coordination window; it does not establish that memory caused the speech or behavior.
+
+## session 3 — global-beats shelter dilemma
+
+**status:** censored technical failure
+
+**date:** 2026-08-13
+
+**seed:** `29993`, exact continuation of sessions 1 and 2
+
+**world:** `lean-camp-v1`, day 3, beat 1 unresolved
+**public identities:** Aster, Birch, Cinder, Lumen
+
+### question
+
+With global simultaneous beats and a zero-cost `wait` action, does the remembered shelter problem produce a completed costly wood transfer followed by shelter construction?
+
+### treatment
+
+The host recursively verified the session-1 root and session-2 parent before reading credentials or contacting a provider. It resumed the exact private and public state, changed shared wood from `2` to `0`, and opened day 3 under `global-beats-v2`.
+
+### result
+
+The outcome is missing, not negative. Aster returned a valid `forage` proposal. Birch returned a valid `wait` proposal. Cinder then exhausted its 10,000-token completion budget without returning an action. Lumen was never called, and the host made no retry or repair call.
+
+Global beats resolve only after every awake survivor submits a choice. The incomplete beat therefore produced no action or speech events. Aster did not objectively forage, and Birch did not objectively wait.
+
+| survivor | energy | food | wood | shelter |
+| --- | ---: | ---: | ---: | --- |
+| Aster | `17` | `0` | `0` | no |
+| Birch | `4` | `4` | `0` | no |
+| Cinder | `10` | `1` | `2` | no |
+| Lumen | `17` | `1` | `2` | no |
+
+The only new world events are the wood adjustment, day start, and beat start. Shared food remains `3`; shared wood is `0` after the planned transition.
+
+### progression notes
+
+- Aster's and Birch's replies are retained as model-call evidence, not world behavior.
+- Birch used the new `wait` schema correctly at the response level, but the failed beat emitted zero `wait_completed` events.
+- The failure occurred on call 3 with HTTP 200 and the explicit kind `completion_budget_exhausted`.
+- Provider-reported cost was `$0.05932487`; the host's uncached calculation was `$0.05954484`.
+- The retained format-v5 artifact links to session 2, while offline verification supplies the session-1 root as the ordered ancestor.
+
+### evidence
+
+- [frozen protocol](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993-protocol.md)
+- [proof and exact failure boundary](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993-proof.md)
+- [complete retained artifact](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993.json)
+- artifact SHA-256: `ca283bd336fd58c1cb0e461e14e8394299cf3a06c7f44654f412ecf408756b27`
+- continuation depth: `2`
+- chain verified: `true`
+- failed-call receipt consistent: `true`
+
+### claim boundary
+
+Session 3 cannot answer its behavioral question. It is a censored provider failure before the first atomic beat resolved. Treating it as zero cooperation, zero waiting, or a completed day would be false.

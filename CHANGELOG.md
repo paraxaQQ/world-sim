@@ -7,7 +7,7 @@
 - verify every ancestor's source receipt, exact replay, transition, public record, state boundary, and seat mapping before provider transport
 - add repeatable `--ancestor` support to `continue-live` and the offline verifier without duplicating the chain inside artifacts
 - reconstruct failed continuation calls and require the retained partial world to match exactly
-- freeze session 3 as the first `global-beats-v2` retest of the shelter dilemma
+- retain session 3 as a censored three-call failure after Kimi exhausted the 10,000-token completion budget before the first `global-beats-v2` beat resolved
 
 ## 0.10.0 - 2026-08-13
 
