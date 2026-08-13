@@ -244,16 +244,61 @@ class ModelHostTests(unittest.TestCase):
         return artifact
 
     @staticmethod
-    def _write_parent(directory: str, artifact: Mapping[str, object]) -> tuple[Path, str]:
+    def _write_parent(
+        directory: str,
+        artifact: Mapping[str, object],
+        name: str = "parent.json",
+    ) -> tuple[Path, str]:
         raw = json.dumps(
             artifact,
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
-        path = Path(directory) / "parent.json"
+        path = Path(directory) / name
         path.write_bytes(raw)
         return path, hashlib.sha256(raw).hexdigest()
+
+    def _free_continuation_chain(
+        self,
+        directory: str,
+        *,
+        through_format: int = 4,
+    ) -> list[tuple[Path, str, dict[str, object]]]:
+        root = self._continuation_parent()
+        root_path, root_sha256 = self._write_parent(
+            directory,
+            root,
+            "session-001.json",
+        )
+        chain = [(root_path, root_sha256, root)]
+        direct_path = root_path
+        direct_sha256 = root_sha256
+        for session in range(2, through_format - 1):
+            replies = tuple(
+                '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+                + name
+                + f" session {session} final note"
+                + '"}}'
+                for name in ("Aster", "Birch", "Cinder", "Lumen")
+            )
+            ancestor_paths = tuple(row[0] for row in chain[:-1])
+            artifact = run_live_survival_continuation(
+                parent_path=direct_path,
+                expected_parent_sha256=direct_sha256,
+                ancestor_paths=ancestor_paths,
+                transition_reason=f"session_{session:03d}_chain_test",
+                max_calls=4,
+                transport=FakeTransport([response(reply) for reply in replies]),
+                environ={},
+            )
+            direct_path, direct_sha256 = self._write_parent(
+                directory,
+                artifact,
+                f"session-{session:03d}.json",
+            )
+            chain.append((direct_path, direct_sha256, artifact))
+        return chain
 
     def test_live_first_beat_uses_frozen_views_and_next_beat_hears_speech(
         self,
@@ -568,6 +613,236 @@ class ModelHostTests(unittest.TestCase):
                 )
         self.assertEqual(transport.requests, [])
 
+    def test_live_continuation_extends_v4_parent_as_format_v5(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=4)
+            root_path, _, _ = chain[0]
+            parent_path, parent_sha256, _ = chain[-1]
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                ancestor_paths=(root_path,),
+                transition_reason="session_003_recursive_chain",
+                max_calls=4,
+                transport=FakeTransport(
+                    [response(REST_REPLY) for _ in FREE_MODELS]
+                ),
+                environ={},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["format_version"], 5)
+        self.assertEqual(
+            artifact["continuation_link"],
+            {
+                "parent_artifact_name": parent_path.name,
+                "parent_artifact_sha256": parent_sha256,
+                "parent_canonical_result_sha256": chain[-1][2][
+                    "canonical_result_sha256"
+                ],
+                "parent_format_version": 4,
+                "parent_mode": "live_named_survival_continuation",
+            },
+        )
+        self.assertEqual(artifact["result"]["final_state"]["cycle"], 3)
+        self.assertEqual(
+            replay_survival(result_from(artifact)).to_dict(), artifact["result"]
+        )
+
+    def test_recursive_continuation_requires_complete_ancestor_chain(self) -> None:
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=4)
+            parent_path, parent_sha256, _ = chain[-1]
+            with self.assertRaisesRegex(ValueError, "requires its ancestor chain"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    transition_reason="session_003_recursive_chain",
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_recursive_continuation_rejects_wrong_ancestor(self) -> None:
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=4)
+            wrong_root = deepcopy(chain[0][2])
+            wrong_root["adapter"] = "wrong-adapter"
+            wrong_path, _ = self._write_parent(
+                directory,
+                wrong_root,
+                "wrong-session-001.json",
+            )
+            parent_path, parent_sha256, _ = chain[-1]
+            with self.assertRaisesRegex(ValueError, "continuation_link"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    ancestor_paths=(wrong_path,),
+                    transition_reason="session_003_recursive_chain",
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_recursive_continuation_rejects_tampered_ancestor(self) -> None:
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=4)
+            tampered_root = deepcopy(chain[0][2])
+            tampered_root["result"]["final_state"]["survivors"][0][
+                "energy"
+            ] += 1
+            tampered_path, _ = self._write_parent(
+                directory,
+                tampered_root,
+                "tampered-session-001.json",
+            )
+            parent_path, parent_sha256, _ = chain[-1]
+            with self.assertRaisesRegex(ValueError, "canonical result SHA-256"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    ancestor_paths=(tampered_path,),
+                    transition_reason="session_003_recursive_chain",
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_recursive_continuation_rejects_reordered_ancestors(self) -> None:
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=5)
+            parent_path, parent_sha256, _ = chain[-1]
+            with self.assertRaisesRegex(ValueError, "ordered oldest to newest"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    ancestor_paths=(chain[1][0], chain[0][0]),
+                    transition_reason="session_004_recursive_chain",
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_live_continuation_rejects_unproven_source_before_transport(self) -> None:
+        parent = self._continuation_parent()
+        parent["source"]["cli_sha256"] = "0" * 64
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            with self.assertRaisesRegex(ValueError, "source receipt"):
+                run_live_survival_continuation(
+                    parent_path=parent_path,
+                    expected_parent_sha256=parent_sha256,
+                    transition_reason="session_002_shelter_dilemma",
+                    transport=transport,
+                    environ={},
+                )
+        self.assertEqual(transport.requests, [])
+
+    def test_format_v5_paid_failure_mid_beat_never_resolves_or_retries(self) -> None:
+        root_replies = tuple(
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+            + name
+            + ' paid root note"}}'
+            for name in ("Aster", "Birch", "Cinder", "Lumen")
+        )
+        root = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=29_993,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.30",
+            transport=FakeTransport(
+                [
+                    paid_panel_response(index, reply, cost="0.001")
+                    for index, reply in enumerate(root_replies)
+                ]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, root_sha256 = self._write_parent(
+                directory,
+                root,
+                "paid-session-001.json",
+            )
+            parent_replies = tuple(
+                '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+                + name
+                + ' paid continuation note"}}'
+                for name in ("Aster", "Birch", "Cinder", "Lumen")
+            )
+            parent = run_live_survival_continuation(
+                parent_path=root_path,
+                expected_parent_sha256=root_sha256,
+                transition_reason="session_002_paid_chain",
+                max_calls=4,
+                max_completion_tokens=1_024,
+                max_paid_usd="0.30",
+                transport=FakeTransport(
+                    [
+                        paid_panel_response(index, reply, cost="0.001")
+                        for index, reply in enumerate(parent_replies)
+                    ]
+                ),
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+            parent_path, parent_sha256 = self._write_parent(
+                directory,
+                parent,
+                "paid-session-002.json",
+            )
+            exhausted_payload = json.loads(
+                paid_panel_response(2, WAIT_REPLY, cost="0.001").body
+            )
+            exhausted_payload["choices"][0]["finish_reason"] = "length"
+            transport = FakeTransport(
+                [
+                    paid_panel_response(0, WAIT_REPLY, cost="0.001"),
+                    paid_panel_response(1, WAIT_REPLY, cost="0.001"),
+                    TransportResponse(200, {}, json.dumps(exhausted_payload)),
+                ]
+            )
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                ancestor_paths=(root_path,),
+                transition_reason="session_003_paid_chain",
+                max_calls=4,
+                max_completion_tokens=1_024,
+                max_paid_usd="0.30",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["format_version"], 5)
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "completion_budget_exhausted")
+        self.assertEqual(len(transport.requests), 3)
+        self.assertEqual(len(artifact["calls"]), 3)
+        self.assertEqual(
+            [call["status"] for call in artifact["calls"]],
+            ["succeeded", "succeeded", "failed"],
+        )
+        self.assertEqual(
+            [
+                event["kind"]
+                for event in artifact["partial_state"]["events"]
+                if event["cycle"] == 3
+            ],
+            ["resource_adjusted", "cycle_started", "slot_started"],
+        )
+        self.assertEqual(
+            artifact["partial_state"]["resources"],
+            artifact["initial_state"]["resources"],
+        )
+
     def test_paid_continuation_preflight_prices_reconstructed_cycle_two_views(self) -> None:
         parent_replies = tuple(
             '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
@@ -752,6 +1027,47 @@ class ModelHostTests(unittest.TestCase):
 
             self.assertEqual(completed.returncode, 2)
             self.assertIn("parent artifact SHA-256 mismatch", completed.stderr)
+            self.assertFalse(output.exists())
+
+    def test_continue_cli_passes_repeatable_ancestors_oldest_to_newest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            chain = self._free_continuation_chain(directory, through_format=5)
+            output = Path(directory) / "continuation.json"
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                Path(__file__).resolve().parents[1] / "src"
+            )
+            parent_path, parent_sha256, _ = chain[-1]
+
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "world_sim",
+                    "continue-live",
+                    "--ancestor",
+                    str(chain[0][0]),
+                    "--ancestor",
+                    str(chain[1][0]),
+                    "--parent",
+                    str(parent_path),
+                    "--parent-sha256",
+                    parent_sha256,
+                    "--transition-id",
+                    "session_004_cli_chain",
+                    "--max-calls",
+                    "0",
+                    "--output",
+                    str(output),
+                ),
+                check=False,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("requires at least 4 model calls", completed.stderr)
             self.assertFalse(output.exists())
 
     def test_live_host_rejects_noncalibrated_population_before_transport(self) -> None:
@@ -947,7 +1263,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.10.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.11.0")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -1302,7 +1618,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.10.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.11.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

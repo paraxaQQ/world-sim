@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 import platform
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.10.0"
+WORLD_SIM_VERSION = "0.11.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -72,6 +73,18 @@ PAID_QUALIFICATION_MODELS = (
     "opencode-paid/kimi-k2.6",
     "opencode-paid/glm-5.2",
 )
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+SOURCE_FILES = {
+    "cli_sha256": Path(__file__).with_name("cli.py"),
+    "model_host_sha256": Path(__file__),
+    "demo_sha256": Path(__file__).with_name("survival") / "demo.py",
+    "engine_sha256": Path(__file__).with_name("survival") / "engine.py",
+    "models_sha256": Path(__file__).with_name("survival") / "models.py",
+    "prompt_sha256": Path(__file__).with_name("survival") / "prompt.py",
+    "protocol_sha256": Path(__file__).with_name("survival") / "protocol.py",
+    "calibration_sha256": Path(__file__).with_name("survival") / "calibration.py",
+}
 
 
 @dataclass(frozen=True)
@@ -819,6 +832,7 @@ def run_live_survival_continuation(
     *,
     parent_path: Path,
     expected_parent_sha256: str,
+    ancestor_paths: Sequence[Path] = (),
     additional_cycles: int = 1,
     shared_resource: str = "wood",
     shared_stock: int = 0,
@@ -838,6 +852,7 @@ def run_live_survival_continuation(
     parent_artifact, parent_result, parent_sha256 = _load_verified_parent_artifact(
         parent_path,
         expected_sha256=expected_parent_sha256,
+        ancestor_paths=ancestor_paths,
     )
     assignments = _verified_parent_assignments(parent_artifact, parent_result)
     world = continue_survival_world(
@@ -924,8 +939,8 @@ def run_live_survival_continuation(
         "parent_artifact_name": parent_path.name,
         "parent_artifact_sha256": parent_sha256,
         "parent_canonical_result_sha256": parent_canonical_sha256,
-        "parent_format_version": 3,
-        "parent_mode": "live_named_survival",
+        "parent_format_version": parent_artifact["format_version"],
+        "parent_mode": parent_artifact["mode"],
     }
     transition_receipt = {
         "method": "deterministic_between_cycle_shared_resource_adjustment",
@@ -938,7 +953,9 @@ def run_live_survival_continuation(
         "record": public_record.to_dict(),
     }
     base = {
-        "format_version": 4,
+        "format_version": (
+            4 if parent_artifact["format_version"] == 3 else 5
+        ),
         "mode": "live_named_survival_continuation",
         "adapter": ADAPTER_NAME,
         "source": {
@@ -1908,23 +1925,75 @@ def _load_verified_parent_artifact(
     parent_path: Path,
     *,
     expected_sha256: str,
+    ancestor_paths: Sequence[Path] = (),
 ) -> tuple[dict[str, Any], SurvivalResult, str]:
-    if (
-        len(expected_sha256) != 64
-        or expected_sha256 != expected_sha256.lower()
-        or any(character not in "0123456789abcdef" for character in expected_sha256)
-    ):
-        raise ValueError("expected_parent_sha256 must be a lowercase SHA-256 hex digest")
-    try:
-        raw = parent_path.read_bytes()
-    except OSError as error:
-        raise ValueError(f"cannot read parent artifact from {parent_path}") from error
-    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    _validate_sha256(expected_sha256, name="expected_parent_sha256")
+    chain_paths = (*tuple(ancestor_paths), parent_path)
+    resolved_paths = [path.resolve() for path in chain_paths]
+    if len(set(resolved_paths)) != len(resolved_paths):
+        raise ValueError("ancestor chain paths must be unique")
+    chain = [_read_live_artifact(path) for path in chain_paths]
+    parent_artifact, actual_sha256 = chain[-1]
     if actual_sha256 != expected_sha256:
         raise ValueError(
             "parent artifact SHA-256 mismatch: "
             f"expected {expected_sha256}, got {actual_sha256}"
         )
+
+    parent_format = parent_artifact.get("format_version")
+    if parent_format == 3:
+        if ancestor_paths:
+            raise ValueError("format-v3 parent does not accept ancestor paths")
+    elif parent_format in {4, 5}:
+        if not ancestor_paths:
+            raise ValueError(
+                f"format-v{parent_format} parent requires its ancestor chain"
+            )
+    else:
+        raise ValueError("parent artifact format_version must be 3, 4, or 5")
+
+    formats = [artifact.get("format_version") for artifact, _ in chain]
+    expected_formats = [3]
+    if len(chain) >= 2:
+        expected_formats.append(4)
+    expected_formats.extend([5] * max(0, len(chain) - 2))
+    if formats != expected_formats:
+        raise ValueError(
+            "ancestor paths must be complete and ordered oldest to newest "
+            "before the direct parent"
+        )
+
+    for artifact, _ in chain:
+        _verify_artifact_source_provenance(artifact)
+
+    root_artifact, _ = chain[0]
+    root_result = _verify_completed_live_result(
+        root_artifact,
+        expected_format=3,
+        expected_mode="live_named_survival",
+    )
+    _verified_parent_assignments(root_artifact, root_result)
+    verified_result = root_result
+    for index in range(1, len(chain)):
+        child_artifact, _ = chain[index]
+        previous_artifact, previous_sha256 = chain[index - 1]
+        verified_result = _verify_continuation_boundary(
+            child_artifact,
+            child_path=chain_paths[index],
+            parent_artifact=previous_artifact,
+            parent_sha256=previous_sha256,
+            parent_result=verified_result,
+        )
+        _verified_parent_assignments(child_artifact, verified_result)
+    return parent_artifact, verified_result, actual_sha256
+
+
+def _read_live_artifact(parent_path: Path) -> tuple[dict[str, Any], str]:
+    try:
+        raw = parent_path.read_bytes()
+    except OSError as error:
+        raise ValueError(f"cannot read parent artifact from {parent_path}") from error
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as error:
@@ -1935,11 +2004,19 @@ def _load_verified_parent_artifact(
         raise ValueError("parent artifact is not valid strict JSON") from error
     if not isinstance(loaded, Mapping):
         raise ValueError("parent artifact must be an object")
-    artifact = deepcopy(dict(loaded))
-    if artifact.get("format_version") != 3:
-        raise ValueError("parent artifact must use format_version 3")
-    if artifact.get("mode") != "live_named_survival":
-        raise ValueError("parent artifact must be a live_named_survival run")
+    return deepcopy(dict(loaded)), actual_sha256
+
+
+def _verify_completed_live_result(
+    artifact: Mapping[str, Any],
+    *,
+    expected_format: int,
+    expected_mode: str,
+) -> SurvivalResult:
+    if artifact.get("format_version") != expected_format:
+        raise ValueError(f"parent artifact must use format_version {expected_format}")
+    if artifact.get("mode") != expected_mode:
+        raise ValueError(f"parent artifact must be a {expected_mode} run")
     if artifact.get("status") != "completed":
         raise ValueError("parent artifact must be completed")
     result_payload = artifact.get("result")
@@ -1952,7 +2029,254 @@ def _load_verified_parent_artifact(
     replayed = replay_survival(parent_result)
     if result_sha256(replayed) != canonical_sha256:
         raise ValueError("parent exact replay changed its canonical result SHA-256")
-    return artifact, replayed, actual_sha256
+    return replayed
+
+
+def _verify_continuation_boundary(
+    artifact: Mapping[str, Any],
+    *,
+    child_path: Path,
+    parent_artifact: Mapping[str, Any],
+    parent_sha256: str,
+    parent_result: SurvivalResult,
+) -> SurvivalResult:
+    parent_format = parent_artifact.get("format_version")
+    expected_format = 4 if parent_format == 3 else 5
+    child_result = _verify_completed_live_result(
+        artifact,
+        expected_format=expected_format,
+        expected_mode="live_named_survival_continuation",
+    )
+    link = artifact.get("continuation_link")
+    if not isinstance(link, Mapping) or set(link) != {
+        "parent_artifact_name",
+        "parent_artifact_sha256",
+        "parent_canonical_result_sha256",
+        "parent_format_version",
+        "parent_mode",
+    }:
+        raise ValueError(f"{child_path.name} continuation_link is invalid")
+    parent_artifact_name = link["parent_artifact_name"]
+    if not isinstance(parent_artifact_name, str) or not parent_artifact_name:
+        raise ValueError("parent artifact name must be non-empty text")
+    expected_link = {
+        "parent_artifact_sha256": parent_sha256,
+        "parent_canonical_result_sha256": parent_artifact[
+            "canonical_result_sha256"
+        ],
+        "parent_format_version": parent_format,
+        "parent_mode": parent_artifact.get("mode"),
+    }
+    actual_link = {
+        key: link[key]
+        for key in expected_link
+    }
+    if actual_link != expected_link:
+        raise ValueError(
+            f"{child_path.name} continuation_link does not match its direct parent"
+        )
+
+    config = artifact.get("config")
+    if not isinstance(config, Mapping):
+        raise ValueError(f"{child_path.name} config must be an object")
+    additional_cycles = config.get("cycles_requested")
+    if (
+        isinstance(additional_cycles, bool)
+        or not isinstance(additional_cycles, int)
+        or additional_cycles < 1
+    ):
+        raise ValueError("parent config cycles_requested must be a positive integer")
+    continuation_options: dict[str, str] = {}
+    interaction_protocol = config.get("interaction_protocol")
+    if interaction_protocol is not None:
+        if not isinstance(interaction_protocol, str):
+            raise ValueError("parent interaction_protocol must be text")
+        continuation_options["interaction_protocol"] = interaction_protocol
+    expected_world = continue_survival_world(
+        parent_result,
+        additional_cycles=additional_cycles,
+        **continuation_options,
+    )
+
+    transition_receipt = artifact.get("transition_receipt")
+    if not isinstance(transition_receipt, Mapping) or set(transition_receipt) != {
+        "method",
+        "event",
+    }:
+        raise ValueError("parent transition_receipt is invalid")
+    if transition_receipt.get("method") != (
+        "deterministic_between_cycle_shared_resource_adjustment"
+    ):
+        raise ValueError("parent transition receipt method is invalid")
+    transition = transition_receipt.get("event")
+    if not isinstance(transition, Mapping):
+        raise ValueError("parent transition event must be an object")
+    detail = transition.get("detail")
+    if not isinstance(detail, Mapping):
+        raise ValueError("parent transition event detail must be an object")
+    resource = detail.get("resource")
+    stock = detail.get("after")
+    reason = detail.get("reason")
+    if not isinstance(resource, str):
+        raise ValueError("parent transition resource must be text")
+    if isinstance(stock, bool) or not isinstance(stock, int):
+        raise ValueError("parent transition stock must be an integer")
+    if not isinstance(reason, str):
+        raise ValueError("parent transition reason must be text")
+    expected_transition = adjust_shared_resource(
+        expected_world,
+        resource=resource,
+        stock=stock,
+        reason=reason,
+    ).to_dict()
+    if dict(transition) != expected_transition:
+        raise ValueError("parent transition receipt does not reconstruct exactly")
+
+    public_record = expected_world.prior_public_record
+    if public_record is None:
+        raise ValueError("reconstructed parent has no prior public record")
+    expected_public_record_receipt = {
+        "method": "final_public_broadcast_per_identity_verbatim",
+        "statement_status": "unverified",
+        "objective_totals_source": "verified_parent_engine_events",
+        "record": public_record.to_dict(),
+    }
+    public_record_receipt = artifact.get("public_record_receipt")
+    if (
+        not isinstance(public_record_receipt, Mapping)
+        or dict(public_record_receipt) != expected_public_record_receipt
+    ):
+        raise ValueError("parent public record receipt does not reconstruct exactly")
+
+    parent_config = parent_artifact.get("config")
+    if not isinstance(parent_config, Mapping):
+        raise ValueError("direct parent config must be an object")
+    expected_config = {
+        "seed": expected_world.seed,
+        "days_requested": additional_cycles,
+        "cycles_requested": additional_cycles,
+        "starting_cycle": expected_world.day + 1,
+        "ending_cycle": expected_world.day + additional_cycles,
+        "slots_per_cycle": expected_world.config.slots_per_cycle,
+        "world_preset": parent_config.get("world_preset"),
+        "calibration_scope": "verified_parent_continuation",
+        "world_config": expected_world.config.to_dict(),
+    }
+    for key, expected in expected_config.items():
+        if config.get(key) != expected:
+            raise ValueError(f"parent config {key} does not match reconstruction")
+    if interaction_protocol is not None and (
+        interaction_protocol != expected_world.interaction_protocol
+    ):
+        raise ValueError("parent interaction_protocol does not match reconstruction")
+
+    expected_initial_state = expected_world.to_dict(include_events=False)
+    expected_initial_state["event_sequence_offset"] = (
+        expected_world.event_sequence_offset
+    )
+    expected_initial_state["observation_history"] = [
+        event.to_dict() for event in expected_world.events
+    ]
+    if child_result.initial_state != expected_initial_state:
+        raise ValueError("parent initial state does not match reconstructed boundary")
+    expected_event_sequence_base = (
+        expected_world.event_sequence_offset + len(expected_world.events)
+    )
+    if child_result.event_sequence_base != expected_event_sequence_base:
+        raise ValueError("parent event_sequence_base does not match reconstruction")
+    _verify_contiguous_event_records(
+        child_result.initial_state["observation_history"],
+        offset=expected_world.event_sequence_offset,
+        name="parent observation history",
+    )
+    _verify_contiguous_event_records(
+        child_result.events,
+        offset=child_result.event_sequence_base,
+        name="parent result events",
+    )
+    return child_result
+
+
+def _verify_contiguous_event_records(
+    events: object,
+    *,
+    offset: int,
+    name: str,
+) -> None:
+    if not isinstance(events, (list, tuple)) or not all(
+        isinstance(event, Mapping) for event in events
+    ):
+        raise ValueError(f"{name} must be an array of objects")
+    expected = list(range(offset + 1, offset + len(events) + 1))
+    actual = [event.get("sequence") for event in events]
+    if actual != expected:
+        raise ValueError(f"{name} must have contiguous sequences")
+
+
+def _verify_artifact_source_provenance(artifact: Mapping[str, Any]) -> None:
+    source = artifact.get("source")
+    expected_keys = {
+        *SOURCE_FILES,
+        "world_sim_version",
+        "python_version",
+        "platform_system",
+    }
+    if not isinstance(source, Mapping) or set(source) != expected_keys:
+        raise ValueError("parent source receipt has unexpected fields")
+    for key in ("world_sim_version", "python_version", "platform_system"):
+        if not isinstance(source[key], str) or not source[key]:
+            raise ValueError(f"parent source {key} must be non-empty text")
+    recorded: dict[str, str] = {}
+    for key in SOURCE_FILES:
+        value = source[key]
+        _validate_sha256(value, name=f"parent source {key}")
+        recorded[key] = value
+    current = {
+        key: hashlib.sha256(path.read_bytes()).hexdigest()
+        for key, path in SOURCE_FILES.items()
+    }
+    if recorded == current:
+        return
+
+    marker = SOURCE_FILES["model_host_sha256"].relative_to(REPOSITORY_ROOT)
+    history = subprocess.run(
+        ("git", "log", "--all", "--format=%H", "--", marker.as_posix()),
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if history.returncode == 0:
+        for commit in history.stdout.splitlines():
+            if _source_hashes_at_commit(commit) == recorded:
+                return
+    raise ValueError("parent source receipt has no matching working tree or commit")
+
+
+def _source_hashes_at_commit(commit: str) -> dict[str, str] | None:
+    result: dict[str, str] = {}
+    for key, source_path in SOURCE_FILES.items():
+        relative = source_path.relative_to(REPOSITORY_ROOT).as_posix()
+        blob = subprocess.run(
+            ("git", "show", f"{commit}:{relative}"),
+            cwd=REPOSITORY_ROOT,
+            check=False,
+            capture_output=True,
+        )
+        if blob.returncode != 0:
+            return None
+        result[key] = hashlib.sha256(blob.stdout).hexdigest()
+    return result
+
+
+def _validate_sha256(value: object, *, name: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
 
 
 def _survival_result_from_mapping(payload: Mapping[str, object]) -> SurvivalResult:

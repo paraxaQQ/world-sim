@@ -6,8 +6,9 @@ import json
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,7 @@ from world_sim.survival.engine import (  # noqa: E402
     adjust_shared_resource,
     continue_survival_world,
     replay_survival,
+    run_survival,
 )
 from world_sim.survival.models import (  # noqa: E402
     SurvivalResult,
@@ -35,10 +37,7 @@ SOURCE_FILES = {
     "models_sha256": SOURCE_ROOT / "world_sim" / "survival" / "models.py",
     "prompt_sha256": SOURCE_ROOT / "world_sim" / "survival" / "prompt.py",
     "protocol_sha256": SOURCE_ROOT / "world_sim" / "survival" / "protocol.py",
-    "calibration_sha256": SOURCE_ROOT
-    / "world_sim"
-    / "survival"
-    / "calibration.py",
+    "calibration_sha256": SOURCE_ROOT / "world_sim" / "survival" / "calibration.py",
 }
 
 
@@ -51,7 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--parent",
         type=Path,
-        help="actual format-v3 parent artifact for a format-v4 continuation",
+        help="direct parent artifact for a continuation",
+    )
+    parser.add_argument(
+        "--ancestor",
+        action="append",
+        default=[],
+        type=Path,
+        help=(
+            "ancestor before --parent, repeat oldest to newest; exclude the "
+            "direct parent"
+        ),
     )
     return parser
 
@@ -61,7 +70,9 @@ def verify_live_artifact(
     *,
     expected_artifact_sha256: str | None = None,
     parent_path: Path | None = None,
+    ancestor_paths: Sequence[Path] = (),
 ) -> dict[str, Any]:
+    ancestors = tuple(ancestor_paths)
     raw = path.read_bytes()
     artifact_sha256 = hashlib.sha256(raw).hexdigest()
     if (
@@ -73,7 +84,9 @@ def verify_live_artifact(
             f"got {artifact_sha256}"
         )
 
-    artifact = _mapping(json.loads(raw), name="artifact")
+    artifact = _mapping(_strict_json_bytes(raw), name="artifact")
+    if "ancestor_chain" in artifact:
+        raise ValueError("artifact must not store a redundant ancestor_chain")
     source = _mapping(artifact.get("source"), name="source")
     source_receipt = _verify_source_receipt(source)
 
@@ -92,21 +105,27 @@ def verify_live_artifact(
         )
     )
     if (
-        format_version == 4
+        format_version in {4, 5}
         or mode == "live_named_survival_continuation"
         or continuation_fields_present
         or parent_path is not None
+        or ancestors
     ):
-        if format_version != 4 or mode != "live_named_survival_continuation":
+        if format_version not in {4, 5} or mode != ("live_named_survival_continuation"):
             raise ValueError(
-                "continuation artifact must use format_version 4 and "
+                "continuation artifact must use format_version 4 or 5 and "
                 "mode live_named_survival_continuation"
             )
         if parent_path is None:
-            raise ValueError("format-v4 continuation verification requires --parent")
+            raise ValueError(
+                f"format-v{format_version} continuation verification requires --parent"
+            )
+        if format_version == 4 and ancestors:
+            raise ValueError("format-v4 continuation does not accept --ancestor")
         return _verify_continuation_artifact(
             artifact,
             parent_path=parent_path,
+            ancestor_paths=ancestors,
             base=base,
         )
 
@@ -134,6 +153,8 @@ def verify_live_artifact(
             "status": status,
             "canonical_result_sha256": canonical_result_sha256,
             "exact_replay": True,
+            "continuation_depth": 0,
+            "root_artifact_sha256": artifact_sha256,
         }
     if status == "failed":
         failure = _mapping(artifact.get("failure"), name="failure")
@@ -169,8 +190,7 @@ def verify_live_artifact(
                 ("http_status", "http_status"),
             )
             if any(
-                failure.get(left) != error.get(right)
-                for left, right in error_pairs
+                failure.get(left) != error.get(right) for left, right in error_pairs
             ):
                 raise ValueError("failure error does not match its call receipt")
         return {
@@ -179,6 +199,8 @@ def verify_live_artifact(
             "failure_kind": failure.get("kind"),
             "failure_call_receipt_consistent": True,
             "exact_replay": None,
+            "continuation_depth": 0,
+            "root_artifact_sha256": artifact_sha256,
         }
     raise ValueError("artifact status must be completed or failed")
 
@@ -187,13 +209,16 @@ def _verify_continuation_artifact(
     artifact: Mapping[str, Any],
     *,
     parent_path: Path,
+    ancestor_paths: Sequence[Path],
     base: Mapping[str, Any],
 ) -> dict[str, Any]:
     link = _mapping(artifact.get("continuation_link"), name="continuation_link")
     try:
         parent_raw = parent_path.read_bytes()
     except OSError as error:
-        raise ValueError(f"cannot read continuation parent from {parent_path}") from error
+        raise ValueError(
+            f"cannot read continuation parent from {parent_path}"
+        ) from error
     parent_artifact_sha256 = hashlib.sha256(parent_raw).hexdigest()
     if link.get("parent_artifact_sha256") != parent_artifact_sha256:
         raise ValueError(
@@ -203,29 +228,54 @@ def _verify_continuation_artifact(
         )
 
     parent_artifact = _mapping(
-        json.loads(parent_raw),
+        _strict_json_bytes(parent_raw),
         name="parent artifact",
     )
-    if (
-        parent_artifact.get("format_version") != 3
-        or parent_artifact.get("mode") != "live_named_survival"
-    ):
-        raise ValueError(
-            "continuation parent must use format_version 3 and mode "
-            "live_named_survival"
+    child_format = artifact.get("format_version")
+    parent_format = parent_artifact.get("format_version")
+    parent_mode = parent_artifact.get("mode")
+    if child_format == 4:
+        valid_parent = parent_format == 3 and parent_mode == "live_named_survival"
+        if not valid_parent:
+            raise ValueError(
+                "format-v4 continuation parent must use format_version 3 and "
+                "mode live_named_survival"
+            )
+    else:
+        valid_parent = parent_format in {4, 5} and parent_mode == (
+            "live_named_survival_continuation"
         )
+        if not valid_parent:
+            raise ValueError(
+                "format-v5 continuation parent must use format_version 4 or 5 "
+                "and mode live_named_survival_continuation"
+            )
     if parent_artifact.get("status") != "completed":
         raise ValueError("continuation parent must be completed")
     if (
-        link.get("parent_format_version") != parent_artifact.get("format_version")
-        or link.get("parent_mode") != parent_artifact.get("mode")
+        link.get("parent_format_version") != parent_format
+        or link.get("parent_mode") != parent_mode
     ):
         raise ValueError("continuation parent format or mode does not match its link")
 
-    parent_receipt = verify_live_artifact(
-        parent_path,
-        expected_artifact_sha256=parent_artifact_sha256,
-    )
+    if parent_format == 3:
+        if ancestor_paths:
+            raise ValueError("format-v3 root must be the oldest supplied artifact")
+        parent_receipt = verify_live_artifact(
+            parent_path,
+            expected_artifact_sha256=parent_artifact_sha256,
+        )
+    else:
+        if not ancestor_paths:
+            raise ValueError(
+                "format-v5 continuation requires its complete ancestor chain"
+            )
+        parent_receipt = verify_live_artifact(
+            parent_path,
+            expected_artifact_sha256=parent_artifact_sha256,
+            parent_path=ancestor_paths[-1],
+            ancestor_paths=ancestor_paths[:-1],
+        )
     parent_canonical_sha256 = parent_receipt.get("canonical_result_sha256")
     if link.get("parent_canonical_result_sha256") != parent_canonical_sha256:
         raise ValueError("continuation parent canonical result SHA-256 mismatch")
@@ -243,9 +293,7 @@ def _verify_continuation_artifact(
         raise ValueError("config cycles_requested must be a positive integer")
     continuation_options: dict[str, Any] = {}
     if "interaction_protocol" in config:
-        continuation_options["interaction_protocol"] = config[
-            "interaction_protocol"
-        ]
+        continuation_options["interaction_protocol"] = config["interaction_protocol"]
     expected_world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,
@@ -315,9 +363,7 @@ def _verify_continuation_artifact(
 
     status = artifact.get("status")
     if status == "completed":
-        result = _survival_result(
-            _mapping(artifact.get("result"), name="result")
-        )
+        result = _survival_result(_mapping(artifact.get("result"), name="result"))
         expected_initial_state = _continued_initial_state(
             expected_world,
             include_observation_history=True,
@@ -326,8 +372,8 @@ def _verify_continuation_artifact(
             raise ValueError(
                 "child initial state does not match the reconstructed continuation"
             )
-        expected_event_sequence_base = (
-            expected_world.event_sequence_offset + len(expected_world.events)
+        expected_event_sequence_base = expected_world.event_sequence_offset + len(
+            expected_world.events
         )
         if result.event_sequence_base != expected_event_sequence_base:
             raise ValueError("child event_sequence_base is invalid")
@@ -354,6 +400,8 @@ def _verify_continuation_artifact(
             "continuation_chain_verified": True,
             "parent_artifact_sha256": parent_artifact_sha256,
             "parent_canonical_result_sha256": parent_canonical_sha256,
+            "continuation_depth": int(parent_receipt["continuation_depth"]) + 1,
+            "root_artifact_sha256": parent_receipt["root_artifact_sha256"],
         }
     if status == "failed":
         expected_initial_state = _continued_initial_state(
@@ -368,11 +416,6 @@ def _verify_continuation_artifact(
             raise ValueError(
                 "child initial state does not match the reconstructed continuation"
             )
-        partial_state = _mapping(
-            artifact.get("partial_state"),
-            name="partial_state",
-        )
-        _verify_failed_partial_state(expected_world, partial_state)
         failure = _mapping(artifact.get("failure"), name="failure")
         calls = _sequence(artifact.get("calls"), name="calls")
         _verify_continuation_failure_receipt(
@@ -383,6 +426,16 @@ def _verify_continuation_artifact(
                 name="seat_assignments",
             ),
         )
+        partial_state = _mapping(
+            artifact.get("partial_state"),
+            name="partial_state",
+        )
+        _verify_failed_partial_state(
+            expected_world,
+            partial_state,
+            failure=failure,
+            calls=calls,
+        )
         return {
             **base,
             "status": status,
@@ -392,6 +445,8 @@ def _verify_continuation_artifact(
             "continuation_chain_verified": True,
             "parent_artifact_sha256": parent_artifact_sha256,
             "parent_canonical_result_sha256": parent_canonical_sha256,
+            "continuation_depth": int(parent_receipt["continuation_depth"]) + 1,
+            "root_artifact_sha256": parent_receipt["root_artifact_sha256"],
         }
     raise ValueError("artifact status must be completed or failed")
 
@@ -403,9 +458,7 @@ def _survival_result(payload: Mapping[str, Any]) -> SurvivalResult:
         ),
         final_state=dict(_mapping(payload.get("final_state"), name="final_state")),
         events=tuple(_sequence(payload.get("events"), name="events")),
-        choice_tape=tuple(
-            _sequence(payload.get("choice_tape"), name="choice_tape")
-        ),
+        choice_tape=tuple(_sequence(payload.get("choice_tape"), name="choice_tape")),
         event_sequence_base=int(payload.get("event_sequence_base", 0)),
     )
 
@@ -440,27 +493,99 @@ def _verify_contiguous_events(
 def _verify_failed_partial_state(
     expected_world: SurvivalWorld,
     partial_state: Mapping[str, Any],
+    *,
+    failure: Mapping[str, Any],
+    calls: Sequence[Any],
 ) -> None:
-    if partial_state.get("config") != expected_world.config.to_dict():
-        raise ValueError("failed partial state config does not match reconstruction")
-    if partial_state.get("seed") != expected_world.seed:
-        raise ValueError("failed partial state seed does not match reconstruction")
-    expected_record = expected_world.prior_public_record
-    if expected_record is None or partial_state.get(
-        "prior_public_record"
-    ) != expected_record.to_dict():
+    replay = _FailedReceiptReplay(failure=failure, calls=calls)
+    replayed_world = deepcopy(expected_world)
+    providers = {name: replay for name in replayed_world.alive_names()}
+    try:
+        run_survival(replayed_world, providers)
+    except RuntimeError as error:
+        if isinstance(error.__cause__, _ReceiptMismatch):
+            raise ValueError(str(error.__cause__)) from error
+        if not isinstance(error.__cause__, _RecordedFailure):
+            raise ValueError(
+                "failed partial state could not be reconstructed"
+            ) from error
+    else:
+        raise ValueError("failure receipt did not interrupt reconstructed execution")
+    if replay.consumed != len(calls):
+        raise ValueError("failure call receipts continue after the recorded failure")
+    if replayed_world.to_dict() != dict(partial_state):
         raise ValueError(
-            "failed partial state public record does not match reconstruction"
+            "failed partial state does not match reconstructed recorded calls"
         )
-    events = _sequence(partial_state.get("events"), name="partial_state events")
-    expected_prefix = [event.to_dict() for event in expected_world.events]
-    if list(events[: len(expected_prefix)]) != expected_prefix:
-        raise ValueError("failed partial state does not retain the continuation history")
-    _verify_contiguous_events(
-        events,
-        offset=expected_world.event_sequence_offset,
-        name="failed partial state events",
-    )
+
+
+class _RecordedFailure(Exception):
+    pass
+
+
+class _ReceiptMismatch(Exception):
+    pass
+
+
+class _FailedReceiptReplay:
+    def __init__(
+        self,
+        *,
+        failure: Mapping[str, Any],
+        calls: Sequence[Any],
+    ) -> None:
+        self.failure = failure
+        self.calls = calls
+        self.consumed = 0
+
+    def decide(self, view: Any) -> Mapping[str, Any]:
+        if self.consumed < len(self.calls):
+            call = _mapping(
+                self.calls[self.consumed],
+                name="continuation call",
+            )
+            expected_sequence = self.consumed + 1
+            if call.get("sequence") != expected_sequence:
+                raise _ReceiptMismatch(
+                    "continuation calls must have contiguous sequences"
+                )
+            expected_context = {
+                "day": view.day,
+                "cycle": view.day,
+                "slot": view.slot,
+                "public_name": view.name,
+            }
+            if any(call.get(key) != value for key, value in expected_context.items()):
+                raise _ReceiptMismatch(
+                    "continuation call order does not match reconstructed execution"
+                )
+            self.consumed += 1
+            status = call.get("status")
+            if status == "succeeded":
+                return dict(_mapping(call.get("parsed_choice"), name="parsed_choice"))
+            if status == "failed":
+                if self.failure.get("call_sequence") != expected_sequence:
+                    raise _ReceiptMismatch(
+                        "failed call does not match the failure receipt"
+                    )
+                raise _RecordedFailure
+            raise _ReceiptMismatch("continuation call status is invalid")
+
+        if self.failure.get("call_sequence") is not None:
+            raise _ReceiptMismatch("failure call receipt is missing")
+        expected_failure = {
+            "day": view.day,
+            "cycle": view.day,
+            "slot": view.slot,
+            "public_name": view.name,
+        }
+        if any(
+            self.failure.get(key) != value for key, value in expected_failure.items()
+        ):
+            raise _ReceiptMismatch(
+                "failure boundary does not match reconstructed execution"
+            )
+        raise _RecordedFailure
 
 
 def _verify_continuation_failure_receipt(
@@ -518,10 +643,9 @@ def _verify_continuation_failure_receipt(
     if len(matching_assignments) != 1:
         raise ValueError("failure does not identify one seat assignment")
     assignment = matching_assignments[0]
-    if (
-        failure.get("seat_id") != assignment.get("seat_id")
-        or failure.get("model") != assignment.get("model")
-    ):
+    if failure.get("seat_id") != assignment.get("seat_id") or failure.get(
+        "model"
+    ) != assignment.get("model"):
         raise ValueError("failure identity does not match its seat assignment")
     if not isinstance(failure.get("message"), str):
         raise ValueError("failure message must be a string")
@@ -589,6 +713,32 @@ def _mapping(value: object, *, name: str) -> Mapping[str, Any]:
     return value
 
 
+def _strict_json_bytes(raw: bytes) -> object:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("artifact is not valid UTF-8") from error
+    return json.loads(
+        text,
+        object_pairs_hook=_unique_object,
+        parse_float=str,
+        parse_constant=_raise_invalid_constant,
+    )
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate object key {key!r}")
+        result[key] = value
+    return result
+
+
+def _raise_invalid_constant(value: str) -> NoReturn:
+    raise ValueError(f"invalid JSON constant {value!r}")
+
+
 def _sequence(value: object, *, name: str) -> Sequence[Any]:
     if not isinstance(value, list):
         raise ValueError(f"{name} must be an array")
@@ -601,6 +751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.artifact,
         expected_artifact_sha256=args.artifact_sha256,
         parent_path=args.parent,
+        ancestor_paths=args.ancestor,
     )
     print(json.dumps(receipt, sort_keys=True))
     return 0

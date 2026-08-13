@@ -12,9 +12,7 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VERIFIER_PATH = REPOSITORY_ROOT / "tools" / "verify_live_artifact.py"
-SESSION_1_ARTIFACT = (
-    REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
-)
+SESSION_1_ARTIFACT = REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
 SESSION_1_ARTIFACT_SHA256 = (
     "a98ec8216c08a172c4ed29fb1da65b63defd3b4a29f53e95fa26a1e187e38b90"
 )
@@ -22,9 +20,7 @@ SESSION_1_CANONICAL_SHA256 = (
     "490663b4a743f51c4b0f44ccc57ba91ee2a7b6d6adafbcda072373a7748a54e7"
 )
 SESSION_2_ARTIFACT = (
-    REPOSITORY_ROOT
-    / "outputs"
-    / "v0.9.0-session-002-shelter-dilemma-29993.json"
+    REPOSITORY_ROOT / "outputs" / "v0.9.0-session-002-shelter-dilemma-29993.json"
 )
 SESSION_2_ARTIFACT_SHA256 = (
     "fc0b07dfc404a2f485f3b6a2c2f191fec5e495153d6147d428d6cb251cab27fe"
@@ -63,6 +59,12 @@ class _RestSpeaker:
                 "text": f"{view.name} final public note",
             },
         }
+
+
+class _FailingSpeaker:
+    def decide(self, view: SurvivorView) -> Mapping[str, object]:
+        del view
+        raise RuntimeError("synthetic provider failure")
 
 
 def _source_receipt() -> dict[str, str]:
@@ -149,9 +151,7 @@ def _continuation_artifacts(
         "continuation_link": {
             "parent_artifact_name": "not-used-for-verification.json",
             "parent_artifact_sha256": parent_sha256,
-            "parent_canonical_result_sha256": parent[
-                "canonical_result_sha256"
-            ],
+            "parent_canonical_result_sha256": parent["canonical_result_sha256"],
             "parent_format_version": 3,
             "parent_mode": "live_named_survival",
         },
@@ -188,7 +188,97 @@ def _continuation_artifacts(
     return parent_path, child_path, child, boundary_state
 
 
+def _next_continuation_artifact(
+    directory: Path,
+    *,
+    parent_path: Path,
+    name: str,
+) -> tuple[Path, dict[str, object], dict[str, object]]:
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    parent_sha256 = hashlib.sha256(parent_path.read_bytes()).hexdigest()
+    parent_result = VERIFIER._survival_result(parent["result"])
+    world = continue_survival_world(parent_result)
+    transition = adjust_shared_resource(
+        world,
+        resource="wood",
+        stock=0,
+        reason=f"synthetic_{name.replace('-', '_')}",
+    )
+    boundary_state = deepcopy(world.to_dict())
+    starting_cycle = world.day + 1
+    public_record = world.prior_public_record
+    if public_record is None:
+        raise AssertionError("continuation fixture has no prior public record")
+    result = run_survival(
+        world,
+        {"Aster": _RestSpeaker(), "Birch": _RestSpeaker()},
+        days=1,
+    )
+    artifact: dict[str, object] = {
+        "format_version": 5,
+        "mode": "live_named_survival_continuation",
+        "source": _source_receipt(),
+        "continuation_link": {
+            "parent_artifact_name": parent_path.name,
+            "parent_artifact_sha256": parent_sha256,
+            "parent_canonical_result_sha256": parent["canonical_result_sha256"],
+            "parent_format_version": parent["format_version"],
+            "parent_mode": parent["mode"],
+        },
+        "transition_receipt": {
+            "method": "deterministic_between_cycle_shared_resource_adjustment",
+            "event": transition.to_dict(),
+        },
+        "public_record_receipt": {
+            "method": "final_public_broadcast_per_identity_verbatim",
+            "statement_status": "unverified",
+            "objective_totals_source": "verified_parent_engine_events",
+            "record": public_record.to_dict(),
+        },
+        "config": {
+            "seed": world.seed,
+            "cycles_requested": 1,
+            "starting_cycle": starting_cycle,
+            "ending_cycle": starting_cycle,
+            "world_config": world.config.to_dict(),
+        },
+        "seat_assignments": [
+            {
+                "seat_id": "seat-001",
+                "public_name": "Aster",
+                "model": "test/model-a",
+            },
+            {
+                "seat_id": "seat-002",
+                "public_name": "Birch",
+                "model": "test/model-b",
+            },
+        ],
+        "calls": [],
+        "status": "completed",
+        "canonical_result_sha256": result_sha256(result),
+        "result": result.to_dict(),
+    }
+    child_path = directory / f"{name}.json"
+    _write_artifact(child_path, artifact)
+    return child_path, artifact, boundary_state
+
+
 class LiveArtifactVerifierTests(unittest.TestCase):
+    def test_verifier_rejects_ambiguous_json_before_schema_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "ambiguous.json"
+            artifact.write_text(
+                '{"format_version":3,"format_version":3}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
+                VERIFIER.verify_live_artifact(artifact)
+
+            artifact.write_text('{"format_version":NaN}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid JSON constant"):
+                VERIFIER.verify_live_artifact(artifact)
+
     def test_retained_session_one_and_two_chain_remain_exact(self) -> None:
         session_one = json.loads(SESSION_1_ARTIFACT.read_text(encoding="utf-8"))
         session_two = json.loads(SESSION_2_ARTIFACT.read_text(encoding="utf-8"))
@@ -230,12 +320,20 @@ class LiveArtifactVerifierTests(unittest.TestCase):
             child_receipt["parent_canonical_result_sha256"],
             SESSION_1_CANONICAL_SHA256,
         )
+        self.assertEqual(parent_receipt["continuation_depth"], 0)
+        self.assertEqual(
+            parent_receipt["root_artifact_sha256"],
+            SESSION_1_ARTIFACT_SHA256,
+        )
+        self.assertEqual(child_receipt["continuation_depth"], 1)
+        self.assertEqual(
+            child_receipt["root_artifact_sha256"],
+            SESSION_1_ARTIFACT_SHA256,
+        )
 
     def test_completed_continuation_verifies_actual_parent_chain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            parent, child, child_payload, _ = _continuation_artifacts(
-                Path(directory)
-            )
+            parent, child, child_payload, _ = _continuation_artifacts(Path(directory))
 
             receipt = VERIFIER.verify_live_artifact(
                 child,
@@ -249,6 +347,122 @@ class LiveArtifactVerifierTests(unittest.TestCase):
             receipt["parent_artifact_sha256"],
             child_payload["continuation_link"]["parent_artifact_sha256"],
         )
+
+    def test_recursive_v3_v4_v5_and_v5_v5_chains_verify(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            v3, v4, _, _ = _continuation_artifacts(root)
+            v5, _, _ = _next_continuation_artifact(
+                root,
+                parent_path=v4,
+                name="session-003",
+            )
+            v5_next, _, _ = _next_continuation_artifact(
+                root,
+                parent_path=v5,
+                name="session-004",
+            )
+            root_sha256 = hashlib.sha256(v3.read_bytes()).hexdigest()
+
+            first = VERIFIER.verify_live_artifact(
+                v5,
+                parent_path=v4,
+                ancestor_paths=(v3,),
+            )
+            second = VERIFIER.verify_live_artifact(
+                v5_next,
+                parent_path=v5,
+                ancestor_paths=(v3, v4),
+            )
+
+        self.assertTrue(first["continuation_chain_verified"])
+        self.assertTrue(first["exact_replay"])
+        self.assertEqual(first["continuation_depth"], 2)
+        self.assertEqual(second["continuation_depth"], 3)
+        self.assertEqual(
+            first["root_artifact_sha256"],
+            root_sha256,
+        )
+        self.assertEqual(
+            second["root_artifact_sha256"],
+            first["root_artifact_sha256"],
+        )
+
+    def test_v5_requires_complete_ordered_untampered_ancestry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            v3, v4, _, _ = _continuation_artifacts(root)
+            v5, _, _ = _next_continuation_artifact(
+                root,
+                parent_path=v4,
+                name="session-003",
+            )
+            v5_next, _, _ = _next_continuation_artifact(
+                root,
+                parent_path=v5,
+                name="session-004",
+            )
+
+            with self.assertRaisesRegex(ValueError, "complete ancestor chain"):
+                VERIFIER.verify_live_artifact(v5, parent_path=v4)
+            with self.assertRaisesRegex(ValueError, "artifact SHA-256"):
+                VERIFIER.verify_live_artifact(
+                    v5_next,
+                    parent_path=v5,
+                    ancestor_paths=(v4, v3),
+                )
+
+            wrong_root = root / "wrong-root.json"
+            _write_artifact(wrong_root, _parent_artifact(seed=29_994))
+            with self.assertRaisesRegex(ValueError, "artifact SHA-256"):
+                VERIFIER.verify_live_artifact(
+                    v5,
+                    parent_path=v4,
+                    ancestor_paths=(wrong_root,),
+                )
+
+            original_root = v3.read_bytes()
+            v3.write_bytes(original_root + b" ")
+            with self.assertRaisesRegex(ValueError, "artifact SHA-256"):
+                VERIFIER.verify_live_artifact(
+                    v5,
+                    parent_path=v4,
+                    ancestor_paths=(v3,),
+                )
+
+    def test_v4_rejects_extra_ancestors_and_v5_rejects_v3_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            v3, v4, v4_payload, _ = _continuation_artifacts(root)
+
+            with self.assertRaisesRegex(ValueError, "does not accept --ancestor"):
+                VERIFIER.verify_live_artifact(
+                    v4,
+                    parent_path=v3,
+                    ancestor_paths=(v3,),
+                )
+
+            v4_payload["format_version"] = 5
+            v4_payload["continuation_link"]["parent_format_version"] = 3
+            _write_artifact(v4, v4_payload)
+            with self.assertRaisesRegex(ValueError, "format_version 4 or 5"):
+                VERIFIER.verify_live_artifact(v4, parent_path=v3)
+
+    def test_cli_accepts_repeatable_ancestors_oldest_to_newest(self) -> None:
+        args = VERIFIER.build_parser().parse_args(
+            [
+                "child.json",
+                "--ancestor",
+                "root.json",
+                "--ancestor",
+                "middle.json",
+                "--parent",
+                "direct.json",
+            ]
+        )
+
+        self.assertEqual(args.ancestor, [Path("root.json"), Path("middle.json")])
+        self.assertEqual(args.parent, Path("direct.json"))
 
     def test_recorded_global_beats_v2_upgrade_is_replay_bound(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -286,6 +500,39 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                     parent_path=parent,
                 )
 
+    def test_v5_interaction_protocol_is_replay_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            v3, v4, _, _ = _continuation_artifacts(
+                root,
+                interaction_protocol=GLOBAL_BEATS_V2,
+            )
+            v5, artifact, _ = _next_continuation_artifact(
+                root,
+                parent_path=v4,
+                name="session-003",
+            )
+
+            receipt = VERIFIER.verify_live_artifact(
+                v5,
+                parent_path=v4,
+                ancestor_paths=(v3,),
+            )
+            self.assertTrue(receipt["continuation_chain_verified"])
+
+            artifact["config"]["interaction_protocol"] = SLOTS_V1
+            artifact["result"]["initial_state"].pop("interaction_protocol")
+            tampered_result = VERIFIER._survival_result(artifact["result"])
+            artifact["canonical_result_sha256"] = result_sha256(tampered_result)
+            _write_artifact(v5, artifact)
+
+            with self.assertRaisesRegex(ValueError, "view hash mismatch"):
+                VERIFIER.verify_live_artifact(
+                    v5,
+                    parent_path=v4,
+                    ancestor_paths=(v3,),
+                )
+
     def test_continuation_requires_an_actual_parent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -312,16 +559,18 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                     parent_path=wrong_parent,
                 )
 
-    def test_continuation_rejects_a_tampered_parent_even_with_updated_link(self) -> None:
+    def test_continuation_rejects_a_tampered_parent_even_with_updated_link(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent_path, child_path, child, _ = _continuation_artifacts(root)
             parent = json.loads(parent_path.read_text(encoding="utf-8"))
             parent["result"]["final_state"]["survivors"][0]["energy"] += 1
             tampered_parent_sha256 = _write_artifact(parent_path, parent)
-            child["continuation_link"][
-                "parent_artifact_sha256"
-            ] = tampered_parent_sha256
+            child["continuation_link"]["parent_artifact_sha256"] = (
+                tampered_parent_sha256
+            )
             _write_artifact(child_path, child)
 
             with self.assertRaisesRegex(ValueError, "replay|canonical"):
@@ -347,9 +596,9 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent, child_path, child, _ = _continuation_artifacts(root)
-            child["public_record_receipt"]["record"]["statements"][0][
-                "text"
-            ] = "tampered"
+            child["public_record_receipt"]["record"]["statements"][0]["text"] = (
+                "tampered"
+            )
             _write_artifact(child_path, child)
 
             with self.assertRaisesRegex(ValueError, "public record receipt"):
@@ -374,16 +623,12 @@ class LiveArtifactVerifierTests(unittest.TestCase):
     def test_failed_continuation_validates_its_call_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            parent, child_path, child, boundary_state = _continuation_artifacts(
-                root
-            )
+            parent, child_path, child, boundary_state = _continuation_artifacts(root)
             child.pop("result")
             child.pop("canonical_result_sha256")
             child["status"] = "failed"
             child["initial_state"] = {
-                key: value
-                for key, value in boundary_state.items()
-                if key != "events"
+                key: value for key, value in boundary_state.items() if key != "events"
             }
             child["partial_state"] = boundary_state
             failed_call = {
@@ -412,6 +657,26 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                 "model": "test/model-a",
                 **failed_call["error"],
             }
+            parent_payload = json.loads(parent.read_text(encoding="utf-8"))
+            failed_world = continue_survival_world(
+                VERIFIER._survival_result(parent_payload["result"])
+            )
+            adjust_shared_resource(
+                failed_world,
+                resource="wood",
+                stock=0,
+                reason="session_002_shelter_dilemma",
+            )
+            with self.assertRaises(RuntimeError):
+                run_survival(
+                    failed_world,
+                    {
+                        "Aster": _FailingSpeaker(),
+                        "Birch": _RestSpeaker(),
+                    },
+                    days=1,
+                )
+            child["partial_state"] = failed_world.to_dict()
             _write_artifact(child_path, child)
 
             receipt = VERIFIER.verify_live_artifact(
@@ -420,6 +685,46 @@ class LiveArtifactVerifierTests(unittest.TestCase):
             )
             self.assertEqual(receipt["status"], "failed")
             self.assertTrue(receipt["failure_call_receipt_consistent"])
+
+            for label, mutate in (
+                (
+                    "resource",
+                    lambda payload: payload["partial_state"]["resources"].__setitem__(
+                        "food", payload["partial_state"]["resources"]["food"] + 1
+                    ),
+                ),
+                (
+                    "survivor",
+                    lambda payload: payload["partial_state"]["survivors"][
+                        0
+                    ].__setitem__(
+                        "energy",
+                        payload["partial_state"]["survivors"][0]["energy"] + 1,
+                    ),
+                ),
+                (
+                    "day",
+                    lambda payload: payload["partial_state"].__setitem__("day", 3),
+                ),
+                (
+                    "event",
+                    lambda payload: payload["partial_state"]["events"].append(
+                        deepcopy(payload["partial_state"]["events"][-1])
+                    ),
+                ),
+            ):
+                with self.subTest(tamper=label):
+                    tampered = deepcopy(child)
+                    mutate(tampered)
+                    _write_artifact(child_path, tampered)
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "does not match reconstructed recorded calls",
+                    ):
+                        VERIFIER.verify_live_artifact(
+                            child_path,
+                            parent_path=parent,
+                        )
 
             child["failure"]["public_name"] = "Birch"
             _write_artifact(child_path, child)
@@ -430,11 +735,7 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                 )
 
     def test_failed_10k_episode_receipt_is_consistent(self) -> None:
-        artifact = (
-            REPOSITORY_ROOT
-            / "outputs"
-            / "v0.7.0-paid-reasoning-29994.json"
-        )
+        artifact = REPOSITORY_ROOT / "outputs" / "v0.7.0-paid-reasoning-29994.json"
 
         receipt = VERIFIER.verify_live_artifact(
             artifact,
@@ -450,11 +751,7 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         self.assertEqual(receipt["source_hashes_matched"], 8)
 
     def test_failed_paid_episode_receipt_is_consistent(self) -> None:
-        artifact = (
-            REPOSITORY_ROOT
-            / "outputs"
-            / "v0.6.0-paid-observation-29995.json"
-        )
+        artifact = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
 
         receipt = VERIFIER.verify_live_artifact(artifact)
 
@@ -470,37 +767,25 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         )
 
     def test_failed_receipt_rejects_a_mismatched_failure_kind(self) -> None:
-        source = (
-            REPOSITORY_ROOT
-            / "outputs"
-            / "v0.6.0-paid-observation-29995.json"
-        )
+        source = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
         payload = json.loads(source.read_text(encoding="utf-8"))
         payload["failure"]["kind"] = "tampered"
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "tampered.json"
             artifact.write_text(json.dumps(payload), encoding="utf-8")
 
-            with self.assertRaisesRegex(
-                ValueError, "failure error does not match"
-            ):
+            with self.assertRaisesRegex(ValueError, "failure error does not match"):
                 VERIFIER.verify_live_artifact(artifact)
 
     def test_failed_receipt_rejects_a_mismatched_identity(self) -> None:
-        source = (
-            REPOSITORY_ROOT
-            / "outputs"
-            / "v0.6.0-paid-observation-29995.json"
-        )
+        source = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
         payload = json.loads(source.read_text(encoding="utf-8"))
         payload["failure"]["public_name"] = "tampered"
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "tampered.json"
             artifact.write_text(json.dumps(payload), encoding="utf-8")
 
-            with self.assertRaisesRegex(
-                ValueError, "failure identity does not match"
-            ):
+            with self.assertRaisesRegex(ValueError, "failure identity does not match"):
                 VERIFIER.verify_live_artifact(artifact)
 
 

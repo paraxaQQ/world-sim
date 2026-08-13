@@ -115,6 +115,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     continue_live.add_argument("--parent", type=Path, required=True)
     continue_live.add_argument("--parent-sha256", required=True)
     continue_live.add_argument(
+        "--ancestor",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "verified ancestor path; repeat oldest to newest, excluding the "
+            "direct parent"
+        ),
+    )
+    continue_live.add_argument(
         "--cycles", "--days", dest="cycles", type=int, default=1
     )
     continue_live.add_argument("--shared-wood-stock", type=int, default=0)
@@ -305,6 +315,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             payload = run_live_survival_continuation(
                 parent_path=args.parent,
                 expected_parent_sha256=args.parent_sha256,
+                ancestor_paths=args.ancestor,
                 additional_cycles=args.cycles,
                 shared_resource="wood",
                 shared_stock=args.shared_wood_stock,

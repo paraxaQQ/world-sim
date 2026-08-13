@@ -1,5 +1,14 @@
 # changelog
 
+## 0.11.0 - 2026-08-13
+
+- extend live campaigns beyond one continuation through format-v5 recursive parent links
+- require complete ordered ancestor files before reconstructing a format-v4 or format-v5 parent
+- verify every ancestor's source receipt, exact replay, transition, public record, state boundary, and seat mapping before provider transport
+- add repeatable `--ancestor` support to `continue-live` and the offline verifier without duplicating the chain inside artifacts
+- reconstruct failed continuation calls and require the retained partial world to match exactly
+- freeze session 3 as the first `global-beats-v2` retest of the shelter dilemma
+
 ## 0.10.0 - 2026-08-13
 
 - expose the existing simultaneous within-day scheduler as shared decision beats while keeping action and speech in one model response
