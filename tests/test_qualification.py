@@ -91,7 +91,7 @@ def _responses_response(
 def _passing_panel() -> list[TransportResponse]:
     return [
         _chat_response("deepseek-v4-flash"),
-        _responses_response("grok-4.6"),
+        _responses_response("grok-4.5"),
         _chat_response("kimi-k2.6"),
         _chat_response("glm-5.2"),
     ]
@@ -130,7 +130,7 @@ class PaidQualificationTests(unittest.TestCase):
             final = {
                 "mode": "paid_adapter_qualification",
                 "status": "passed",
-                "qualification_id": "paid-panel-qualification-001",
+                "qualification_id": "paid-panel-qualification-002",
                 "calls": [],
                 "summary": {"models_passed": 4},
             }

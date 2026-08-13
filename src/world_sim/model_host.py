@@ -46,7 +46,7 @@ PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("1.20")
 QUALIFICATION_MAX_AUTHORIZATION_USD = Decimal("0.30")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 USD_COST_TICKS_PER_USD = Decimal("10000000000")
-QUALIFICATION_ID = "paid-panel-qualification-001"
+QUALIFICATION_ID = "paid-panel-qualification-002"
 QUALIFICATION_PROTOCOL = "world-sim-adapter-v1"
 QUALIFICATION_SYSTEM_PROMPT = (
     "You are performing an API compatibility check, not a game or decision task.\n"
@@ -58,7 +58,7 @@ QUALIFICATION_USER_PROMPT = (
 )
 PAID_QUALIFICATION_MODELS = (
     "opencode-paid/deepseek-v4-flash",
-    "opencode-paid/grok-4.6",
+    "opencode-paid/grok-4.5",
     "opencode-paid/kimi-k2.6",
     "opencode-paid/glm-5.2",
 )
@@ -72,6 +72,7 @@ class ModelPrice:
 
 PAID_ZEN_PRICES = {
     "deepseek-v4-flash": ModelPrice(Decimal("0.14"), Decimal("0.28")),
+    "grok-4.5": ModelPrice(Decimal("2.00"), Decimal("6.00")),
     "grok-4.6": ModelPrice(Decimal("2.00"), Decimal("6.00")),
     "kimi-k2.6": ModelPrice(Decimal("0.95"), Decimal("4.00")),
     "glm-5.2": ModelPrice(Decimal("1.40"), Decimal("4.40")),
@@ -1285,10 +1286,11 @@ def _build_provider_request(
     schema_name: str,
 ) -> dict[str, object]:
     if assignment.endpoint.provider == "opencode-paid":
-        if assignment.model_id == "grok-4.6":
+        if assignment.model_id in {"grok-4.5", "grok-4.6"}:
             if reasoning_effort == "compatibility-first":
                 raise ValueError(
-                    "grok-4.6 reasoning cannot be disabled; use provider-default or low"
+                    f"{assignment.model_id} reasoning cannot be disabled; "
+                    "use provider-default or low"
                 )
             request: dict[str, object] = {
                 "model": assignment.model_id,
@@ -1517,7 +1519,7 @@ def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
             raise ValueError("the opencode-paid endpoint does not accept -free models")
         endpoint = (
             _PAID_RESPONSES_ENDPOINT
-            if provider == "opencode-paid" and model_id == "grok-4.6"
+            if provider == "opencode-paid" and model_id in {"grok-4.5", "grok-4.6"}
             else _ENDPOINTS[provider]
         )
         assignments.append(

@@ -127,7 +127,7 @@ OpenCode currently lists several time-limited [free Zen models](https://opencode
 
 The first two paid episodes were technically incomplete. MiniMax M3 exhausted the original 1,024-token allowance in v0.6.0, then its 10,000-token v0.7.0 request returned HTTP 400. Neither chance resolved, so those artifacts contain no world-level social behavior. MiniMax is excluded for an unproven production wire, not for anything it chose in the world. The [v0.6.0 proof](outputs/v0.6.0-paid-observation-29995-proof.md) and [v0.7.0 proof](outputs/v0.7.0-paid-reasoning-29994-proof.md) retain the exact failures.
 
-v0.8.0 replaces that seat with Grok 4.6 and adds a separate adapter qualification. The probe contains no names, energy, peers, actions, scarcity, or survival framing. Each model receives the same request to return this fixed object:
+v0.8.0 replaces that seat with a Grok model and adds a separate adapter qualification. The probe contains no names, energy, peers, actions, scarcity, or survival framing. Each model receives the same request to return this fixed object:
 
 ```json
 {"protocol":"world-sim-adapter-v1","ok":true}
@@ -138,7 +138,7 @@ The panel is frozen in this order:
 | planned public name | hidden model assignment | production API |
 | --- | --- | --- |
 | Aster | `opencode-paid/deepseek-v4-flash` | Chat Completions |
-| Birch | `opencode-paid/grok-4.6` | Responses |
+| Birch | `opencode-paid/grok-4.5` | Responses |
 | Cinder | `opencode-paid/kimi-k2.6` | Chat Completions |
 | Lumen | `opencode-paid/glm-5.2` | Chat Completions |
 
@@ -152,27 +152,29 @@ $env:OPENCODE_ZEN_API_KEY = (Get-Clipboard -Raw).Trim()
 try {
   py -3.11 -m world_sim qualify-live `
     --model opencode-paid/deepseek-v4-flash `
-    --model opencode-paid/grok-4.6 `
+    --model opencode-paid/grok-4.5 `
     --model opencode-paid/kimi-k2.6 `
     --model opencode-paid/glm-5.2 `
     --max-completion-tokens 10000 `
     --temperature 0.2 `
     --max-paid-usd 0.30 `
     --timeout-seconds 300 `
-    --output outputs\v0.8.0-paid-panel-qualification-001.json
+    --output outputs\v0.8.0-paid-panel-qualification-002.json
 } finally {
   Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
   Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
 }
 ```
 
-The current [OpenCode Zen model table](https://opencode.ai/docs/zen) lists Grok 4.6 on `/zen/v1/responses` at `$2` per million input tokens and `$6` per million output tokens below 200,000 input tokens. At the pinned panel prices, a 20,000-input-token and 10,000-output-token envelope costs at most `$0.29575` across these four calls after the host's 1.25 safety factor. The qualification therefore authorizes `$0.30`.
+The current [OpenCode Zen model table](https://opencode.ai/docs/zen) lists Grok 4.5 on `/zen/v1/responses` at `$2` per million input tokens and `$6` per million output tokens below 200,000 input tokens. At the pinned panel prices, a 20,000-input-token and 10,000-output-token envelope costs at most `$0.29575` across these four calls after the host's 1.25 safety factor. The qualification therefore authorizes `$0.30`.
 
 That number is a local request bound, not a card-charge guarantee. A timeout can be billed, prices can change, and Zen auto-reload is outside the process. Disable auto-reload or set an account-level limit if card-level control matters.
 
-See the [frozen qualification protocol](outputs/v0.8.0-paid-panel-qualification-protocol.md) for the exact prompts, pass conditions, cost derivation, and stopping rules. Qualification consumes no experiment seed. Behavioral seed `29993` remains unopened unless all four adapters pass.
+See the [frozen qualification 002 protocol](outputs/v0.8.0-paid-panel-qualification-002-protocol.md) for the exact prompts, pass conditions, cost derivation, and stopping rules. Qualification consumes no experiment seed. Behavioral seed `29993` remains unopened unless all four adapters pass.
 
 Qualification `001` ran once on 2026-08-13. DeepSeek V4 Flash, Kimi K2.6, and GLM 5.2 passed. Grok 4.6 returned HTTP 403. All four models were attempted exactly once, and the successful calls reported `$0.00081851` in total. The Grok call has no trustworthy billing receipt, so its cost is unknown. See the [qualification proof](outputs/v0.8.0-paid-panel-qualification-001-proof.md) and [retained artifact](outputs/v0.8.0-paid-panel-qualification-001.json). No model saw the survival world, and seed `29993` remains unopened.
+
+Qualification `002` substitutes Grok 4.5 before any behavioral run. It preserves the provider family, Responses endpoint, price, fixed probe, and all inference controls. The substitution is based only on the 4.6 transport failure, not on model behavior.
 
 If the panel passes, the next one-cycle survival episode can authorize at most `$1.19` for 16 calls under the same 20,000-input-token and 10,000-output-token envelope. The repository hard ceiling is `$1.20`. We freeze that behavioral command only after qualification, then run seed `29993` once without provider retries, response repairs, or behavior-based reruns.
 
