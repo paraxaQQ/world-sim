@@ -1,5 +1,10 @@
 # changelog
 
+## 0.4.2 - 2026-08-12
+
+- add an explicit `--reasoning-effort low` live-model compatibility mode while retaining `provider-default`.
+- record the selected reasoning-effort mode in every live artifact; do not claim a numerical reasoning budget from the compatibility setting.
+
 ## 0.4.1 - 2026-08-12
 
 - allow authenticated access to `-free` OpenCode Zen models through the optional `OPENCODE_ZEN_API_KEY` environment variable.

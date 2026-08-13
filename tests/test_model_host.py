@@ -188,6 +188,41 @@ class ModelHostTests(unittest.TestCase):
         )
         self.assertNotIn(secret, json.dumps(artifact))
 
+    def test_low_reasoning_effort_is_sent_and_recorded(self) -> None:
+        transport = FakeTransport(
+            [
+                response('{"action":{"kind":"rest"},"say":null}'),
+                response('{"action":{"kind":"rest"},"say":null}'),
+            ]
+        )
+        artifact = run_live_survival(
+            model_refs=("opencode/alpha-free", "opencode/beta-free"),
+            days=1,
+            max_calls=2,
+            reasoning_effort="low",
+            transport=transport,
+            environ={},
+        )
+
+        self.assertEqual(artifact["config"]["reasoning_effort"], "low")
+        self.assertEqual(
+            [request["body"]["reasoning_effort"] for request in transport.requests],
+            ["low", "low"],
+        )
+
+    def test_unknown_reasoning_effort_fails_before_transport(self) -> None:
+        transport = FakeTransport([])
+        with self.assertRaisesRegex(ValueError, "reasoning_effort must be one of"):
+            run_live_survival(
+                model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                days=1,
+                max_calls=2,
+                reasoning_effort="invented",
+                transport=transport,
+                environ={},
+            )
+        self.assertEqual(transport.requests, [])
+
     def test_bad_model_json_is_one_paid_rest_without_retry(self) -> None:
         transport = FakeTransport(
             [

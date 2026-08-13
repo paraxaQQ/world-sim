@@ -10,8 +10,10 @@ from .experiment import run_counterfactual_pair, run_pilot
 from .metrics import calculate_metrics
 from .model_host import (
     DEFAULT_LIVE_MAX_CALLS,
+    DEFAULT_LIVE_REASONING_EFFORT,
     DEFAULT_LIVE_TEMPERATURE,
     DEFAULT_LIVE_TIMEOUT_SECONDS,
+    LIVE_REASONING_EFFORTS,
     run_live_survival,
 )
 from .models import SelectionMode, VerificationMode, WorldConfig
@@ -59,6 +61,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--temperature",
         type=float,
         default=DEFAULT_LIVE_TEMPERATURE,
+    )
+    survive_live.add_argument(
+        "--reasoning-effort",
+        choices=LIVE_REASONING_EFFORTS,
+        default=DEFAULT_LIVE_REASONING_EFFORT,
+        help="send low reasoning effort or preserve the provider default",
     )
     survive_live.add_argument(
         "--timeout-seconds",
@@ -116,6 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_calls=args.max_calls,
                 max_completion_tokens=args.max_completion_tokens,
                 temperature=args.temperature,
+                reasoning_effort=args.reasoning_effort,
                 timeout_seconds=args.timeout_seconds,
             )
         except ValueError as error:

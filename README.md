@@ -70,22 +70,25 @@ py -3.11 -m world_sim survive `
 
 The command prints objective metrics and a canonical SHA-256 for the complete result. The artifact includes the choice tape, view hashes, objective events, and final state. Running the same configuration again produces the same artifact bytes and hash.
 
-Run the smallest live smoke test with two models from OpenCode's free pool:
+Run the smallest proven live smoke test with two independent seats on OpenCode's free Nemotron route:
 
 ```powershell
 $env:PYTHONPATH = "src"
 py -3.11 -m world_sim survive-live `
-  --model opencode/mimo-v2.5-free `
-  --model opencode/deepseek-v4-flash-free `
-  --seed 17 --days 3 --max-calls 6 `
+  --model opencode/nemotron-3.5-lightning-free `
+  --model opencode/nemotron-3.5-lightning-free `
+  --seed 17 --days 1 --max-calls 2 `
   --max-completion-tokens 4096 `
+  --reasoning-effort low `
   --show-transcript `
   --output artifacts\live-smoke-17.json
 ```
 
-Each repeated `--model` value fills the next hidden seat: Aster, then Birch, then Cinder, up to eight survivors. A three-day, two-model run can make at most six calls, so the command rejects a lower `--max-calls` value before it contacts a provider. The output file is required because a failed provider call can happen after earlier calls have already completed.
+Each repeated `--model` value fills the next hidden seat: Aster, then Birch, then Cinder, up to eight survivors. The one-day, two-seat command above can make at most two calls, so it rejects a lower `--max-calls` value before it contacts a provider. The output file is required because a failed provider call can happen after earlier calls have already completed.
 
 The `opencode` route accepts only `-free` models. It runs anonymously unless `OPENCODE_ZEN_API_KEY` is set, which can provide authenticated access to the same free models. To use the paid OpenCode Go route, pass a model such as `opencode-go/mimo-v2.5`. The adapter reads `OPENCODE_API_KEY` first, then the existing OpenCode `auth.json`. It never puts either key or an authorization header in the artifact.
+
+`--reasoning-effort low` sends that exact compatibility option to Zen and records it in the artifact. It made the current Nemotron free route return a complete action instead of exhausting its full completion budget, but Zen does not expose a numeric reasoning budget for that model. Use `--reasoning-effort provider-default` to omit the option. Do not interpret `low` as a measured amount of private reasoning; use the recorded provider token counts as the only evidence.
 
 ## model boundary
 

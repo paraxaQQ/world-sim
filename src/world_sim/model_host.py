@@ -20,6 +20,8 @@ ADAPTER_NAME = "opencode-direct-chat-completions"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
+DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
+LIVE_REASONING_EFFORTS = ("provider-default", "low")
 MAX_HTTP_RESPONSE_BYTES = 131_072
 
 
@@ -94,7 +96,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.4.1",
+            "User-Agent": "world-sim/0.4.2",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -158,6 +160,7 @@ class _LiveProvider(SurvivalChoiceProvider):
     timeout_seconds: float
     max_completion_tokens: int
     temperature: float
+    reasoning_effort: str | None
     calls: list[dict[str, Any]]
 
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
@@ -174,6 +177,8 @@ class _LiveProvider(SurvivalChoiceProvider):
             "response_format": {"type": "json_object"},
             "stream": False,
         }
+        if self.reasoning_effort is not None:
+            request["reasoning_effort"] = self.reasoning_effort
         try:
             response = self.transport.post(
                 self.assignment.endpoint,
@@ -280,6 +285,7 @@ def run_live_survival(
     max_calls: int = DEFAULT_LIVE_MAX_CALLS,
     max_completion_tokens: int = MODEL_MAX_COMPLETION_TOKENS,
     temperature: float = DEFAULT_LIVE_TEMPERATURE,
+    reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
     timeout_seconds: float = DEFAULT_LIVE_TIMEOUT_SECONDS,
     transport: ChatTransport | None = None,
     auth_path: Path | None = None,
@@ -294,6 +300,10 @@ def run_live_survival(
         temperature,
         timeout_seconds,
     )
+    if reasoning_effort not in LIVE_REASONING_EFFORTS:
+        raise ValueError(
+            "reasoning_effort must be one of " + ", ".join(LIVE_REASONING_EFFORTS)
+        )
     active_environ = os.environ if environ is None else environ
     zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
     go_key = (
@@ -311,6 +321,9 @@ def run_live_survival(
             timeout_seconds=timeout_seconds,
             max_completion_tokens=max_completion_tokens,
             temperature=temperature,
+            reasoning_effort=(
+                None if reasoning_effort == "provider-default" else reasoning_effort
+            ),
             calls=calls,
         )
         for assignment in assignments
@@ -330,6 +343,7 @@ def run_live_survival(
             "max_calls": max_calls,
             "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
+            "reasoning_effort": reasoning_effort,
             "timeout_seconds": timeout_seconds,
         },
         "seat_assignments": [assignment.to_dict() for assignment in assignments],
