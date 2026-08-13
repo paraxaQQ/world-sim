@@ -96,7 +96,9 @@ The paid allowlist is `deepseek-v4-flash`, `minimax-m3`, `kimi-k2.6`, and `glm-5
 
 This is a local preflight, not a provider-side dollar guarantee. Zen reports cost after a billable request, and prices or token accounting can change. When the ceiling must also exist on the provider side, use a Zen workspace or member limit.
 
-The first paid attempt used the command below. It made one billable DeepSeek request, exhausted the 1,024-token completion budget, and stopped before contacting the other models. Do not rerun it unchanged. See [the retained failure receipt](outputs/v0.4.3-paid-live-smoke-attempt.md).
+The first paid attempt used `--reasoning-effort low`. It made one billable DeepSeek request, exhausted the 1,024-token completion budget, and stopped before contacting the other models. See [the retained failure receipt](outputs/v0.4.3-paid-live-smoke-attempt.md).
+
+The command below uses the compatibility-first profile for a fresh paid smoke. It sends each allowlisted model its documented `thinking: {"type": "disabled"}` control. Paid smoke runs are limited to one day so preflight prices every potential call.
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -109,7 +111,7 @@ try {
     --model opencode-paid/glm-5.2 `
     --seed 17 --days 1 --max-calls 4 `
     --max-completion-tokens 1024 `
-    --reasoning-effort low `
+    --reasoning-effort compatibility-first `
     --max-paid-usd 0.05 `
     --timeout-seconds 120 `
     --show-transcript `
@@ -122,7 +124,9 @@ try {
 }
 ```
 
-`--reasoning-effort low` records a compatibility request, not a common reasoning treatment. The free and Go profiles send that field directly. The paid profiles pass it only to DeepSeek and GLM, disable Kimi's long-thinking mode under the 1,024-token smoke cap, and omit MiniMax's unsupported field. DeepSeek and GLM currently map `low` to a higher reasoning tier, so the flag does not create comparable budgets. Each `calls[].request` object is the exact audit record.
+`--reasoning-effort compatibility-first` is available only for paid-only runs. It sends `thinking: {"type": "disabled"}` to DeepSeek, MiniMax, Kimi, and GLM and omits `reasoning_effort`. This is a direct-answer transport profile, not a claim that the models have equal internal computation. Each `calls[].request` object is the exact audit record.
+
+`--reasoning-effort low` remains available for the free and Go routes. On paid models, it sends `low` to DeepSeek and GLM, disables Kimi's long-thinking mode, and leaves MiniMax native. DeepSeek and GLM currently map `low` to a higher reasoning tier, so the flag does not create comparable budgets.
 
 ## model boundary
 

@@ -291,7 +291,120 @@ class ModelHostTests(unittest.TestCase):
         )
         self.assertEqual(kimi["thinking"], {"type": "disabled"})
         self.assertEqual(set(glm), set(deepseek))
+        self.assertEqual(deepseek["reasoning_effort"], "low")
+        self.assertEqual(glm["reasoning_effort"], "low")
         self.assertNotIn(secret, json.dumps(artifact))
+
+    def test_paid_compatibility_profile_uses_model_native_controls(self) -> None:
+        models = (
+            "deepseek-v4-flash",
+            "minimax-m3",
+            "kimi-k2.6",
+            "glm-5.2",
+        )
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"rest"},"say":null}',
+                    cost="0.001",
+                )
+                for _ in models
+            ]
+        )
+        artifact = run_live_survival(
+            model_refs=tuple(f"opencode-paid/{model}" for model in models),
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="compatibility-first",
+            max_paid_usd="0.05",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(
+            artifact["config"]["reasoning_effort"], "compatibility-first"
+        )
+        deepseek, minimax, kimi, glm = (
+            request["body"] for request in transport.requests
+        )
+        self.assertEqual(deepseek["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", deepseek)
+        self.assertEqual(
+            set(minimax),
+            {"model", "messages", "max_completion_tokens", "thinking", "stream"},
+        )
+        self.assertEqual(minimax["thinking"], {"type": "disabled"})
+        self.assertEqual(kimi["thinking"], {"type": "disabled"})
+        self.assertNotIn("temperature", kimi)
+        self.assertEqual(glm["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", glm)
+
+    def test_paid_provider_default_omits_reasoning_controls(self) -> None:
+        models = (
+            "deepseek-v4-flash",
+            "minimax-m3",
+            "kimi-k2.6",
+            "glm-5.2",
+        )
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"rest"},"say":null}',
+                    cost="0.001",
+                )
+                for _ in models
+            ]
+        )
+        run_live_survival(
+            model_refs=tuple(f"opencode-paid/{model}" for model in models),
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="provider-default",
+            max_paid_usd="0.05",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        for request in transport.requests:
+            body = request["body"]
+            self.assertNotIn("reasoning_effort", body)
+            self.assertNotIn("thinking", body)
+
+    def test_compatibility_profile_rejects_nonpaid_routes_before_transport(self) -> None:
+        transport = FakeTransport([])
+        with self.assertRaisesRegex(
+            ValueError, "compatibility-first requires a paid-only run"
+        ):
+            run_live_survival(
+                model_refs=("opencode/alpha-free", "opencode/beta-free"),
+                days=1,
+                max_calls=2,
+                reasoning_effort="compatibility-first",
+                transport=transport,
+                environ={},
+            )
+        self.assertEqual(transport.requests, [])
+
+    def test_paid_multiday_run_is_rejected_before_transport(self) -> None:
+        transport = FakeTransport([])
+        with self.assertRaisesRegex(ValueError, "require exactly one day"):
+            run_live_survival(
+                model_refs=(
+                    "opencode-paid/deepseek-v4-flash",
+                    "opencode-paid/minimax-m3",
+                ),
+                days=2,
+                max_calls=4,
+                max_completion_tokens=1_024,
+                reasoning_effort="compatibility-first",
+                max_paid_usd="0.004",
+                transport=transport,
+                environ={},
+            )
+        self.assertEqual(transport.requests, [])
 
     def test_paid_zen_rejects_unsafe_runs_before_credentials_or_transport(self) -> None:
         cases = (
@@ -305,7 +418,7 @@ class ModelHostTests(unittest.TestCase):
             ),
             (
                 {"max_paid_usd": "0.05", "days": 3, "max_calls": 6},
-                "limited to four calls",
+                "require exactly one day",
             ),
             (
                 {"max_paid_usd": "0.000001"},

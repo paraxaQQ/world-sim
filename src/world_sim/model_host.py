@@ -27,7 +27,7 @@ DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
 DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
-LIVE_REASONING_EFFORTS = ("provider-default", "low")
+LIVE_REASONING_EFFORTS = ("provider-default", "low", "compatibility-first")
 MAX_HTTP_RESPONSE_BYTES = 131_072
 PAID_ZEN_PRICE_SNAPSHOT = "2026-08-12"
 PAID_ZEN_PRICE_SAFETY_FACTOR = Decimal("1.25")
@@ -124,7 +124,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.4.3",
+            "User-Agent": "world-sim/0.4.4",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -352,6 +352,11 @@ def run_live_survival(
         for assignment in assignments
         if assignment.endpoint.provider == "opencode-paid"
     )
+    if (
+        reasoning_effort == "compatibility-first"
+        and len(paid_assignments) != len(assignments)
+    ):
+        raise ValueError("reasoning_effort compatibility-first requires a paid-only run")
     paid_limit, paid_preflight = _paid_preflight(
         assignments=paid_assignments,
         all_assignments=assignments,
@@ -493,13 +498,17 @@ def _build_request(
     ]
     if assignment.endpoint.provider == "opencode-paid":
         if assignment.model_id == "minimax-m3":
-            return {
+            request: dict[str, object] = {
                 "model": assignment.model_id,
                 "messages": messages,
                 "max_completion_tokens": max_completion_tokens,
-                "temperature": temperature,
                 "stream": False,
             }
+            if reasoning_effort == "compatibility-first":
+                request["thinking"] = {"type": "disabled"}
+            else:
+                request["temperature"] = temperature
+            return request
         if assignment.model_id == "kimi-k2.6":
             request: dict[str, object] = {
                 "model": assignment.model_id,
@@ -508,20 +517,24 @@ def _build_request(
                 "response_format": {"type": "json_object"},
                 "stream": False,
             }
-            if reasoning_effort == "low":
+            if reasoning_effort in {"low", "compatibility-first"}:
                 request["thinking"] = {"type": "disabled"}
             return request
-        request: dict[str, object] = {
-            "model": assignment.model_id,
-            "messages": messages,
-            "max_tokens": max_completion_tokens,
-            "temperature": temperature,
-            "response_format": {"type": "json_object"},
-            "stream": False,
-        }
-        if reasoning_effort is not None:
-            request["reasoning_effort"] = reasoning_effort
-        return request
+        if assignment.model_id in {"deepseek-v4-flash", "glm-5.2"}:
+            request: dict[str, object] = {
+                "model": assignment.model_id,
+                "messages": messages,
+                "max_tokens": max_completion_tokens,
+                "temperature": temperature,
+                "response_format": {"type": "json_object"},
+                "stream": False,
+            }
+            if reasoning_effort == "compatibility-first":
+                request["thinking"] = {"type": "disabled"}
+            elif reasoning_effort is not None:
+                request["reasoning_effort"] = reasoning_effort
+            return request
+        raise RuntimeError("paid model has no request profile")
     request: dict[str, object] = {
         "model": assignment.model_id,
         "messages": messages,
@@ -558,6 +571,8 @@ def _paid_preflight(
         )
     if len(assignments) != len(all_assignments):
         raise ValueError("paid and non-paid models cannot be mixed in one run")
+    if days != 1:
+        raise ValueError("paid Zen smoke runs require exactly one day")
     if len(assignments) * days > 4:
         raise ValueError("paid Zen smoke runs are limited to four calls")
     names = tuple(assignment.public_name for assignment in all_assignments)

@@ -1,5 +1,10 @@
 # changelog
 
+## 0.4.4 - 2026-08-13
+
+- add `--reasoning-effort compatibility-first` for paid smoke tests and send each allowlisted model its documented `thinking: {"type": "disabled"}` control.
+- reject the compatibility profile outside paid-only runs, restrict paid smoke runs to one day so every potential call is priced by preflight, and preserve exact model-specific requests in artifacts.
+
 ## 0.4.3 - 2026-08-12
 
 - add an explicit `opencode-paid` Zen route for DeepSeek V4 Flash, MiniMax M3, Kimi K2.6, and GLM 5.2 with pinned model-specific chat request profiles.

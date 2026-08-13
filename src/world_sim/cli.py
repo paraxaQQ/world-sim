@@ -67,7 +67,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--reasoning-effort",
         choices=LIVE_REASONING_EFFORTS,
         default=DEFAULT_LIVE_REASONING_EFFORT,
-        help="send low reasoning effort or preserve the provider default",
+        help="preserve defaults, request low, or use the paid direct-answer profile",
     )
     survive_live.add_argument(
         "--max-paid-usd",
