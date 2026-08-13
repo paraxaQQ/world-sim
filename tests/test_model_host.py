@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 
 from world_sim.model_host import (
@@ -18,27 +19,37 @@ from world_sim.survival.engine import replay_survival
 from world_sim.survival.models import SurvivalResult
 
 
-def response(content: str, *, request_id: str = "request-1") -> TransportResponse:
+def response(
+    content: str,
+    *,
+    request_id: str = "request-1",
+    cost: str | None = None,
+    cost_in_usage: bool = False,
+) -> TransportResponse:
+    usage: dict[str, object] = {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "total_tokens": 120,
+        "completion_tokens_details": {"reasoning_tokens": 15},
+    }
+    if cost is not None and cost_in_usage:
+        usage["cost"] = cost
+    payload: dict[str, object] = {
+        "model": "fake-model",
+        "choices": [
+            {
+                "message": {"content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": usage,
+    }
+    if cost is not None and not cost_in_usage:
+        payload["cost"] = cost
     return TransportResponse(
         status=200,
         headers={"x-request-id": request_id},
-        body=json.dumps(
-            {
-                "model": "fake-model",
-                "choices": [
-                    {
-                        "message": {"content": content},
-                        "finish_reason": "stop",
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": 100,
-                    "completion_tokens": 20,
-                    "total_tokens": 120,
-                    "completion_tokens_details": {"reasoning_tokens": 15},
-                },
-            }
-        ),
+        body=json.dumps(payload),
     )
 
 
@@ -187,6 +198,256 @@ class ModelHostTests(unittest.TestCase):
             [secret, secret],
         )
         self.assertNotIn(secret, json.dumps(artifact))
+
+    def test_paid_zen_four_call_cap_and_cost_receipt(self) -> None:
+        secret = "paid-zen-key-not-for-the-artifact"
+        models = (
+            "deepseek-v4-flash",
+            "minimax-m3",
+            "kimi-k2.6",
+            "glm-5.2",
+        )
+        transport = FakeTransport(
+            [
+                response(
+                    '{"action":{"kind":"rest"},"say":null}',
+                    cost=cost,
+                    cost_in_usage=index % 2 == 0,
+                )
+                for index, cost in enumerate(("0.001", "0.002", "0.003", "0.004"))
+            ]
+        )
+        artifact = run_live_survival(
+            model_refs=tuple(f"opencode-paid/{model}" for model in models),
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="low",
+            max_paid_usd="0.05",
+            transport=transport,
+            auth_path=Path("missing.json"),
+            environ={"OPENCODE_ZEN_API_KEY": f" {secret} "},
+        )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(len(transport.requests), 4)
+        self.assertEqual(artifact["config"]["max_paid_usd"], "0.05")
+        self.assertLessEqual(
+            Decimal(artifact["paid_preflight"]["total_cost_bound_usd"]),
+            Decimal("0.05"),
+        )
+        self.assertEqual(
+            artifact["provider_summary"]["provider_reported_cost_usd"], "0.01"
+        )
+        self.assertTrue(artifact["provider_summary"]["cost_reporting_complete"])
+        self.assertEqual(
+            artifact["provider_summary"]["uncached_calculated_cost_usd"],
+            "0.0004766",
+        )
+        self.assertEqual(
+            [request["api_key"] for request in transport.requests],
+            [secret, secret, secret, secret],
+        )
+        for request, model in zip(transport.requests, models, strict=True):
+            endpoint = request["endpoint"]
+            self.assertIsInstance(endpoint, EndpointSpec)
+            self.assertEqual(endpoint.url, "https://opencode.ai/zen/v1/chat/completions")
+            self.assertEqual(request["body"]["model"], model)
+        deepseek, minimax, kimi, glm = (
+            request["body"] for request in transport.requests
+        )
+        self.assertEqual(
+            set(deepseek),
+            {
+                "model",
+                "messages",
+                "max_tokens",
+                "temperature",
+                "response_format",
+                "stream",
+                "reasoning_effort",
+            },
+        )
+        self.assertEqual(
+            set(minimax),
+            {
+                "model",
+                "messages",
+                "max_completion_tokens",
+                "temperature",
+                "stream",
+            },
+        )
+        self.assertEqual(
+            set(kimi),
+            {
+                "model",
+                "messages",
+                "max_completion_tokens",
+                "response_format",
+                "thinking",
+                "stream",
+            },
+        )
+        self.assertEqual(kimi["thinking"], {"type": "disabled"})
+        self.assertEqual(set(glm), set(deepseek))
+        self.assertNotIn(secret, json.dumps(artifact))
+
+    def test_paid_zen_rejects_unsafe_runs_before_credentials_or_transport(self) -> None:
+        cases = (
+            ({}, "max_paid_usd is required"),
+            ({"max_paid_usd": "0"}, "positive finite decimal"),
+            ({"max_paid_usd": "NaN"}, "positive finite decimal"),
+            ({"max_paid_usd": "0.051"}, "cannot exceed 0.05 USD"),
+            (
+                {"max_paid_usd": "0.05", "model_refs": ("opencode-paid/unknown",) * 2},
+                "not in the pinned price allowlist",
+            ),
+            (
+                {"max_paid_usd": "0.05", "days": 3, "max_calls": 6},
+                "limited to four calls",
+            ),
+            (
+                {"max_paid_usd": "0.000001"},
+                "conservative paid bound",
+            ),
+        )
+        defaults: dict[str, object] = {
+            "model_refs": (
+                "opencode-paid/deepseek-v4-flash",
+                "opencode-paid/minimax-m3",
+            ),
+            "days": 1,
+            "max_calls": 2,
+            "max_completion_tokens": 1_024,
+        }
+        for overrides, message in cases:
+            with self.subTest(message):
+                transport = FakeTransport([])
+                arguments = {**defaults, **overrides}
+                with self.assertRaisesRegex(ValueError, message):
+                    run_live_survival(
+                        **arguments,
+                        transport=transport,
+                        auth_path=Path("missing.json"),
+                        environ={},
+                    )
+                self.assertEqual(transport.requests, [])
+
+    def test_paid_response_requires_a_valid_reported_cost(self) -> None:
+        malformed = (
+            response('{"action":{"kind":"rest"},"say":null}'),
+            response('{"action":{"kind":"rest"},"say":null}', cost="-0.1"),
+            response('{"action":{"kind":"rest"},"say":null}', cost="not-a-cost"),
+        )
+        for provider_response in malformed:
+            with self.subTest(provider_response.body):
+                artifact = run_live_survival(
+                    model_refs=(
+                        "opencode-paid/deepseek-v4-flash",
+                        "opencode-paid/minimax-m3",
+                    ),
+                    days=1,
+                    max_calls=2,
+                    max_completion_tokens=1_024,
+                    max_paid_usd="0.05",
+                    transport=FakeTransport([provider_response]),
+                    environ={"OPENCODE_ZEN_API_KEY": "secret"},
+                )
+                self.assertEqual(artifact["status"], "failed")
+                self.assertEqual(artifact["failure"]["kind"], "provider_cost_error")
+                self.assertEqual(artifact["partial_state"]["day"], 0)
+                self.assertFalse(
+                    artifact["provider_summary"]["cost_reporting_complete"]
+                )
+                self.assertIsNone(
+                    artifact["provider_summary"]["provider_reported_cost_usd"]
+                )
+                self.assertNotIn("raw_body", artifact["calls"][0]["response"])
+
+    def test_paid_cost_preserves_numeric_json_and_rejects_conflicts(self) -> None:
+        exact_cost = "0.0000001234567890123456789"
+        exact_body = (
+            '{"model":"fake","choices":[{"message":{"content":'
+            '"{\\"action\\":{\\"kind\\":\\"rest\\"},\\"say\\":null}"},'
+            '"finish_reason":"stop"}],"usage":{"prompt_tokens":100,'
+            '"completion_tokens":20,"total_tokens":120},"cost":'
+            f"{exact_cost}}}"
+        )
+        artifact = run_live_survival(
+            model_refs=(
+                "opencode-paid/deepseek-v4-flash",
+                "opencode-paid/minimax-m3",
+            ),
+            days=1,
+            max_calls=2,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.05",
+            transport=FakeTransport(
+                [
+                    TransportResponse(200, {}, exact_body),
+                    response(
+                        '{"action":{"kind":"rest"},"say":null}',
+                        cost="0",
+                    ),
+                ]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+        self.assertEqual(
+            artifact["provider_summary"]["provider_reported_cost_usd"], exact_cost
+        )
+
+        conflict = response(
+            '{"action":{"kind":"rest"},"say":null}', cost="0.001"
+        )
+        conflict_payload = json.loads(conflict.body)
+        conflict_payload["usage"]["cost"] = "0.002"
+        conflict = TransportResponse(200, {}, json.dumps(conflict_payload))
+        failed = run_live_survival(
+            model_refs=(
+                "opencode-paid/deepseek-v4-flash",
+                "opencode-paid/minimax-m3",
+            ),
+            days=1,
+            max_calls=2,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.05",
+            transport=FakeTransport([conflict]),
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+        self.assertEqual(failed["failure"]["kind"], "provider_cost_error")
+        self.assertFalse(failed["provider_summary"]["cost_reporting_complete"])
+
+    def test_paid_length_failure_retains_the_billed_cost_without_retry(self) -> None:
+        exhausted = json.loads(
+            response(
+                '{"action":{"kind":"rest"},"say":null}', cost="0.001"
+            ).body
+        )
+        exhausted["choices"][0]["finish_reason"] = "length"
+        transport = FakeTransport(
+            [TransportResponse(200, {}, json.dumps(exhausted))]
+        )
+        artifact = run_live_survival(
+            model_refs=(
+                "opencode-paid/deepseek-v4-flash",
+                "opencode-paid/minimax-m3",
+            ),
+            days=1,
+            max_calls=2,
+            max_completion_tokens=1_024,
+            max_paid_usd="0.05",
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": "secret"},
+        )
+
+        self.assertEqual(len(transport.requests), 1)
+        self.assertEqual(artifact["failure"]["kind"], "completion_budget_exhausted")
+        self.assertTrue(artifact["provider_summary"]["cost_reporting_complete"])
+        self.assertEqual(
+            artifact["provider_summary"]["provider_reported_cost_usd"], "0.001"
+        )
 
     def test_low_reasoning_effort_is_sent_and_recorded(self) -> None:
         transport = FakeTransport(

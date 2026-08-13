@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -69,6 +70,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="send low reasoning effort or preserve the provider default",
     )
     survive_live.add_argument(
+        "--max-paid-usd",
+        type=Decimal,
+        help="required conservative authorization ceiling for opencode-paid models",
+    )
+    survive_live.add_argument(
         "--timeout-seconds",
         type=float,
         default=DEFAULT_LIVE_TIMEOUT_SECONDS,
@@ -125,6 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_completion_tokens=args.max_completion_tokens,
                 temperature=args.temperature,
                 reasoning_effort=args.reasoning_effort,
+                max_paid_usd=args.max_paid_usd,
                 timeout_seconds=args.timeout_seconds,
             )
         except ValueError as error:

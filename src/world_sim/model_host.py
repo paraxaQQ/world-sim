@@ -6,11 +6,17 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 from .survival.demo import result_sha256, survival_metrics
-from .survival.engine import SurvivalChoiceProvider, make_survival_world, run_survival
+from .survival.engine import (
+    SurvivalChoiceProvider,
+    make_survival_world,
+    run_survival,
+    survival_view_for,
+)
 from .survival.models import DEFAULT_SURVIVOR_NAMES, SurvivalConfig, SurvivorView
 from .survival.prompt import render_system_prompt, render_turn_prompt
 from .survival.protocol import MODEL_MAX_COMPLETION_TOKENS, parse_model_response
@@ -23,6 +29,25 @@ DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
 DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
 LIVE_REASONING_EFFORTS = ("provider-default", "low")
 MAX_HTTP_RESPONSE_BYTES = 131_072
+PAID_ZEN_PRICE_SNAPSHOT = "2026-08-12"
+PAID_ZEN_PRICE_SAFETY_FACTOR = Decimal("1.25")
+PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS = 1_024
+PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("0.05")
+USD_PER_MILLION_TOKENS = Decimal("1000000")
+
+
+@dataclass(frozen=True)
+class ModelPrice:
+    input_per_million_usd: Decimal
+    output_per_million_usd: Decimal
+
+
+PAID_ZEN_PRICES = {
+    "deepseek-v4-flash": ModelPrice(Decimal("0.14"), Decimal("0.28")),
+    "minimax-m3": ModelPrice(Decimal("0.30"), Decimal("1.20")),
+    "kimi-k2.6": ModelPrice(Decimal("0.95"), Decimal("4.00")),
+    "glm-5.2": ModelPrice(Decimal("1.40"), Decimal("4.40")),
+}
 
 
 @dataclass(frozen=True)
@@ -43,6 +68,9 @@ _ENDPOINTS = {
     ),
     "opencode-go": EndpointSpec(
         "opencode-go", "opencode.ai", "/zen/go/v1/chat/completions", True
+    ),
+    "opencode-paid": EndpointSpec(
+        "opencode-paid", "opencode.ai", "/zen/v1/chat/completions", True
     ),
 }
 
@@ -96,7 +124,7 @@ class StdlibChatTransport:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": "world-sim/0.4.2",
+            "User-Agent": "world-sim/0.4.3",
         }
         if api_key is not None:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -166,19 +194,13 @@ class _LiveProvider(SurvivalChoiceProvider):
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
         if view.name != self.assignment.public_name:
             raise RuntimeError("a model provider received the wrong public identity")
-        request: dict[str, object] = {
-            "model": self.assignment.model_id,
-            "messages": [
-                {"role": "system", "content": render_system_prompt(view.name)},
-                {"role": "user", "content": render_turn_prompt(view)},
-            ],
-            "max_tokens": self.max_completion_tokens,
-            "temperature": self.temperature,
-            "response_format": {"type": "json_object"},
-            "stream": False,
-        }
-        if self.reasoning_effort is not None:
-            request["reasoning_effort"] = self.reasoning_effort
+        request = _build_request(
+            self.assignment,
+            view,
+            max_completion_tokens=self.max_completion_tokens,
+            temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
+        )
         try:
             response = self.transport.post(
                 self.assignment.endpoint,
@@ -209,6 +231,21 @@ class _LiveProvider(SurvivalChoiceProvider):
             content, metadata = _parse_envelope(response.body)
         except EnvelopeFailure as error:
             self._fail(view, request, error.kind, str(error), response)
+        if self.assignment.endpoint.provider == "opencode-paid":
+            if metadata["provider_reported_cost_usd"] is None:
+                self._fail(
+                    view,
+                    request,
+                    "provider_cost_error",
+                    "paid response did not report its cost",
+                    response,
+                )
+            try:
+                metadata["uncached_calculated_cost_usd"] = _calculate_usage_cost(
+                    self.assignment.model_id, metadata["usage"]
+                )
+            except EnvelopeFailure as error:
+                self._fail(view, request, error.kind, str(error), response)
 
         parsed = parse_model_response(
             content,
@@ -243,14 +280,19 @@ class _LiveProvider(SurvivalChoiceProvider):
         message: str,
         response: TransportResponse | None,
     ) -> NoReturn:
+        response_receipt = _error_receipt(response) if response is not None else None
+        if (
+            response_receipt is not None
+            and response is not None
+            and self.assignment.endpoint.provider == "opencode-paid"
+        ):
+            response_receipt.update(
+                _paid_error_cost_receipt(response, self.assignment.model_id)
+            )
         record = {
             **self._base_record(view, request),
             "status": "failed",
-            "response": (
-                _error_receipt(response)
-                if response is not None
-                else None
-            ),
+            "response": response_receipt,
             "error": {
                 "kind": kind,
                 "message": message,
@@ -286,6 +328,7 @@ def run_live_survival(
     max_completion_tokens: int = MODEL_MAX_COMPLETION_TOKENS,
     temperature: float = DEFAULT_LIVE_TEMPERATURE,
     reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
+    max_paid_usd: Decimal | str | None = None,
     timeout_seconds: float = DEFAULT_LIVE_TIMEOUT_SECONDS,
     transport: ChatTransport | None = None,
     auth_path: Path | None = None,
@@ -304,11 +347,33 @@ def run_live_survival(
         raise ValueError(
             "reasoning_effort must be one of " + ", ".join(LIVE_REASONING_EFFORTS)
         )
+    paid_assignments = tuple(
+        assignment
+        for assignment in assignments
+        if assignment.endpoint.provider == "opencode-paid"
+    )
+    paid_limit, paid_preflight = _paid_preflight(
+        assignments=paid_assignments,
+        all_assignments=assignments,
+        seed=seed,
+        days=days,
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        reasoning_effort=(
+            None if reasoning_effort == "provider-default" else reasoning_effort
+        ),
+        max_paid_usd=max_paid_usd,
+    )
     active_environ = os.environ if environ is None else environ
     zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
+    if paid_assignments and zen_key is None:
+        raise ValueError("paid Zen models require OPENCODE_ZEN_API_KEY")
     go_key = (
         load_opencode_go_api_key(auth_path=auth_path, environ=environ)
-        if any(assignment.endpoint.requires_api_key for assignment in assignments)
+        if any(
+            assignment.endpoint.provider == "opencode-go"
+            for assignment in assignments
+        )
         else None
     )
     calls: list[dict[str, Any]] = []
@@ -317,7 +382,9 @@ def run_live_survival(
         assignment.public_name: _LiveProvider(
             assignment=assignment,
             transport=active_transport,
-            api_key=go_key if assignment.endpoint.requires_api_key else zen_key,
+            api_key=(
+                go_key if assignment.endpoint.provider == "opencode-go" else zen_key
+            ),
             timeout_seconds=timeout_seconds,
             max_completion_tokens=max_completion_tokens,
             temperature=temperature,
@@ -344,8 +411,10 @@ def run_live_survival(
             "max_completion_tokens": max_completion_tokens,
             "temperature": temperature,
             "reasoning_effort": reasoning_effort,
+            "max_paid_usd": _decimal_text(paid_limit) if paid_limit is not None else None,
             "timeout_seconds": timeout_seconds,
         },
+        "paid_preflight": paid_preflight,
         "seat_assignments": [assignment.to_dict() for assignment in assignments],
         "calls": calls,
     }
@@ -410,6 +479,151 @@ def load_opencode_go_api_key(
     return key.strip()
 
 
+def _build_request(
+    assignment: _Assignment,
+    view: SurvivorView,
+    *,
+    max_completion_tokens: int,
+    temperature: float,
+    reasoning_effort: str | None,
+) -> dict[str, object]:
+    messages = [
+        {"role": "system", "content": render_system_prompt(view.name)},
+        {"role": "user", "content": render_turn_prompt(view)},
+    ]
+    if assignment.endpoint.provider == "opencode-paid":
+        if assignment.model_id == "minimax-m3":
+            return {
+                "model": assignment.model_id,
+                "messages": messages,
+                "max_completion_tokens": max_completion_tokens,
+                "temperature": temperature,
+                "stream": False,
+            }
+        if assignment.model_id == "kimi-k2.6":
+            request: dict[str, object] = {
+                "model": assignment.model_id,
+                "messages": messages,
+                "max_completion_tokens": max_completion_tokens,
+                "response_format": {"type": "json_object"},
+                "stream": False,
+            }
+            if reasoning_effort == "low":
+                request["thinking"] = {"type": "disabled"}
+            return request
+        request: dict[str, object] = {
+            "model": assignment.model_id,
+            "messages": messages,
+            "max_tokens": max_completion_tokens,
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+            "stream": False,
+        }
+        if reasoning_effort is not None:
+            request["reasoning_effort"] = reasoning_effort
+        return request
+    request: dict[str, object] = {
+        "model": assignment.model_id,
+        "messages": messages,
+        "max_tokens": max_completion_tokens,
+        "temperature": temperature,
+        "response_format": {"type": "json_object"},
+        "stream": False,
+    }
+    if reasoning_effort is not None:
+        request["reasoning_effort"] = reasoning_effort
+    return request
+
+
+def _paid_preflight(
+    *,
+    assignments: Sequence[_Assignment],
+    all_assignments: Sequence[_Assignment],
+    seed: int,
+    days: int,
+    max_completion_tokens: int,
+    temperature: float,
+    reasoning_effort: str | None,
+    max_paid_usd: Decimal | str | None,
+) -> tuple[Decimal | None, dict[str, object] | None]:
+    if not assignments:
+        if max_paid_usd is not None:
+            raise ValueError("max_paid_usd requires at least one opencode-paid model")
+        return None, None
+    limit = _parse_positive_decimal(max_paid_usd, name="max_paid_usd")
+    if limit > PAID_ZEN_MAX_AUTHORIZATION_USD:
+        raise ValueError(
+            "paid Zen smoke authorization cannot exceed "
+            f"{_decimal_text(PAID_ZEN_MAX_AUTHORIZATION_USD)} USD"
+        )
+    if len(assignments) != len(all_assignments):
+        raise ValueError("paid and non-paid models cannot be mixed in one run")
+    if len(assignments) * days > 4:
+        raise ValueError("paid Zen smoke runs are limited to four calls")
+    names = tuple(assignment.public_name for assignment in all_assignments)
+    world = make_survival_world(
+        names,
+        seed=seed,
+        config=SurvivalConfig(max_days=days),
+    )
+    rows: list[dict[str, str | int]] = []
+    total = Decimal("0")
+    for assignment in assignments:
+        if assignment.model_id not in PAID_ZEN_PRICES:
+            raise ValueError(
+                f"paid model {assignment.model_id!r} is not in the pinned price allowlist"
+            )
+        provider = PAID_ZEN_PRICES[assignment.model_id]
+        view = survival_view_for(world, assignment.public_name)
+        request = _build_request(
+            assignment,
+            view,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            reasoning_effort=reasoning_effort,
+        )
+        prompt_bytes = len(
+            json.dumps(
+                request["messages"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        input_token_bound = prompt_bytes + PAID_CHAT_TEMPLATE_OVERHEAD_TOKENS
+        call_bound = (
+            Decimal(input_token_bound) * provider.input_per_million_usd
+            + Decimal(max_completion_tokens) * provider.output_per_million_usd
+        ) / USD_PER_MILLION_TOKENS * PAID_ZEN_PRICE_SAFETY_FACTOR
+        total += call_bound
+        rows.append(
+            {
+                "model": assignment.model_ref,
+                "prompt_utf8_bytes": prompt_bytes,
+                "input_token_bound": input_token_bound,
+                "max_completion_tokens": max_completion_tokens,
+                "input_per_million_usd": _decimal_text(
+                    provider.input_per_million_usd
+                ),
+                "output_per_million_usd": _decimal_text(
+                    provider.output_per_million_usd
+                ),
+                "cost_bound_usd": _decimal_text(call_bound),
+            }
+        )
+    if total > limit:
+        raise ValueError(
+            f"conservative paid bound {_decimal_text(total)} USD exceeds "
+            f"--max-paid-usd {_decimal_text(limit)}"
+        )
+    return limit, {
+        "price_snapshot": PAID_ZEN_PRICE_SNAPSHOT,
+        "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
+        "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+        "calls": rows,
+        "total_cost_bound_usd": _decimal_text(total),
+    }
+
+
 def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
     refs = tuple(reference.strip() for reference in model_refs)
     if not 2 <= len(refs) <= len(DEFAULT_SURVIVOR_NAMES):
@@ -421,12 +635,15 @@ def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
         provider, separator, model_id = model_ref.partition("/")
         if not separator or provider not in _ENDPOINTS:
             raise ValueError(
-                f"model {model_ref!r} must use opencode/MODEL or opencode-go/MODEL"
+                f"model {model_ref!r} must use opencode/MODEL, "
+                "opencode-paid/MODEL, or opencode-go/MODEL"
             )
         if not model_id or len(model_id) > 128:
             raise ValueError(f"model {model_ref!r} has an invalid model ID")
         if provider == "opencode" and not model_id.endswith("-free"):
             raise ValueError("the unauthenticated opencode endpoint only accepts -free models")
+        if provider == "opencode-paid" and model_id.endswith("-free"):
+            raise ValueError("the opencode-paid endpoint does not accept -free models")
         assignments.append(
             _Assignment(
                 f"seat-{index:03d}", name, model_ref, _ENDPOINTS[provider], model_id
@@ -491,7 +708,72 @@ def _parse_envelope(raw_body: str) -> tuple[str, dict[str, object]]:
         "provider_model": provider_model if isinstance(provider_model, str) else None,
         "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
         "usage": dict(usage) if isinstance(usage, Mapping) else {},
+        "provider_reported_cost_usd": _provider_cost(payload, usage),
     }
+
+
+def _provider_cost(payload: Mapping[str, object], usage: object) -> str | None:
+    top_level = payload.get("cost")
+    nested = usage.get("cost") if isinstance(usage, Mapping) else None
+    if top_level is None and nested is None:
+        return None
+    values = [value for value in (top_level, nested) if value is not None]
+    parsed = tuple(_parse_nonnegative_decimal(value, name="provider cost") for value in values)
+    if len(parsed) == 2 and parsed[0] != parsed[1]:
+        raise EnvelopeFailure(
+            "provider_cost_error", "provider returned conflicting cost values"
+        )
+    return _decimal_text(parsed[0])
+
+
+def _calculate_usage_cost(model_id: str, raw_usage: object) -> str:
+    if model_id not in PAID_ZEN_PRICES:
+        raise EnvelopeFailure("provider_cost_error", "paid model has no pinned price")
+    if not isinstance(raw_usage, Mapping):
+        raise EnvelopeFailure("provider_cost_error", "paid response has no usage object")
+    prompt_tokens = raw_usage.get("prompt_tokens")
+    completion_tokens = raw_usage.get("completion_tokens")
+    if type(prompt_tokens) is not int or prompt_tokens < 0:
+        raise EnvelopeFailure("provider_cost_error", "paid response has invalid prompt tokens")
+    if type(completion_tokens) is not int or completion_tokens < 0:
+        raise EnvelopeFailure(
+            "provider_cost_error", "paid response has invalid completion tokens"
+        )
+    price = PAID_ZEN_PRICES[model_id]
+    calculated = (
+        Decimal(prompt_tokens) * price.input_per_million_usd
+        + Decimal(completion_tokens) * price.output_per_million_usd
+    ) / USD_PER_MILLION_TOKENS
+    return _decimal_text(calculated)
+
+
+def _parse_positive_decimal(value: object, *, name: str) -> Decimal:
+    if value is None or isinstance(value, bool):
+        raise ValueError(f"{name} is required for paid Zen models")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(f"{name} must be a decimal number") from error
+    if not parsed.is_finite() or parsed <= 0:
+        raise ValueError(f"{name} must be a positive finite decimal")
+    return parsed
+
+
+def _parse_nonnegative_decimal(value: object, *, name: str) -> Decimal:
+    if isinstance(value, bool):
+        raise EnvelopeFailure("provider_cost_error", f"{name} is invalid")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise EnvelopeFailure("provider_cost_error", f"{name} is invalid") from error
+    if not parsed.is_finite() or parsed < 0:
+        raise EnvelopeFailure("provider_cost_error", f"{name} is invalid")
+    return parsed
+
+
+def _decimal_text(value: Decimal) -> str:
+    text = format(value.normalize(), "f")
+    return "0" if text == "-0" else text
 
 
 def _error_receipt(response: TransportResponse) -> dict[str, object]:
@@ -505,8 +787,37 @@ def _error_receipt(response: TransportResponse) -> dict[str, object]:
     return receipt
 
 
+def _paid_error_cost_receipt(
+    response: TransportResponse, model_id: str
+) -> dict[str, str]:
+    try:
+        payload = _strict_json(response.body)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    usage = payload.get("usage")
+    result: dict[str, str] = {}
+    try:
+        provider_cost = _provider_cost(payload, usage)
+        if provider_cost is not None:
+            result["provider_reported_cost_usd"] = provider_cost
+            result["uncached_calculated_cost_usd"] = _calculate_usage_cost(
+                model_id, usage
+            )
+    except EnvelopeFailure:
+        return result
+    return result
+
+
 def _provider_summary(calls: Sequence[Mapping[str, Any]]) -> dict[str, object]:
     succeeded = [call for call in calls if call.get("status") == "succeeded"]
+    paid = [
+        call
+        for call in calls
+        if isinstance(call.get("model"), str)
+        and str(call["model"]).startswith("opencode-paid/")
+    ]
     return {
         "calls_attempted": len(calls),
         "calls_succeeded": len(succeeded),
@@ -532,6 +843,21 @@ def _provider_summary(calls: Sequence[Mapping[str, Any]]) -> dict[str, object]:
             "reasoning_tokens": _sum_usage(succeeded, "reasoning_tokens"),
             "total_tokens": _sum_usage(succeeded, "total_tokens"),
         },
+        "cost_reporting_complete": (
+            _responses_have_decimal(paid, "provider_reported_cost_usd")
+            if paid
+            else None
+        ),
+        "provider_reported_cost_usd": (
+            _sum_response_decimals(paid, "provider_reported_cost_usd")
+            if paid
+            else None
+        ),
+        "uncached_calculated_cost_usd": (
+            _sum_response_decimals(paid, "uncached_calculated_cost_usd")
+            if paid
+            else None
+        ),
     }
 
 
@@ -549,6 +875,30 @@ def _sum_usage(calls: Sequence[Mapping[str, Any]], field_name: str) -> int | Non
     return sum(values) if values else None
 
 
+def _sum_response_decimals(
+    calls: Sequence[Mapping[str, Any]], field_name: str
+) -> str | None:
+    total = Decimal("0")
+    if not calls:
+        return None
+    for call in calls:
+        response = call.get("response")
+        value = response.get(field_name) if isinstance(response, Mapping) else None
+        if not isinstance(value, str):
+            return None
+        try:
+            total += Decimal(value)
+        except InvalidOperation:
+            return None
+    return _decimal_text(total)
+
+
+def _responses_have_decimal(
+    calls: Sequence[Mapping[str, Any]], field_name: str
+) -> bool:
+    return _sum_response_decimals(calls, field_name) is not None
+
+
 def _request_id(headers: Mapping[str, str]) -> str | None:
     return next(
         (headers[name] for name in ("x-request-id", "request-id", "cf-ray") if headers.get(name)),
@@ -560,6 +910,7 @@ def _strict_json(raw_json: str) -> object:
     return json.loads(
         raw_json,
         object_pairs_hook=_unique_object,
+        parse_float=str,
         parse_constant=lambda value: (_raise_invalid_constant(value)),
     )
 

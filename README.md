@@ -86,9 +86,43 @@ py -3.11 -m world_sim survive-live `
 
 Each repeated `--model` value fills the next hidden seat: Aster, then Birch, then Cinder, up to eight survivors. The one-day, two-seat command above can make at most two calls, so it rejects a lower `--max-calls` value before it contacts a provider. The output file is required because a failed provider call can happen after earlier calls have already completed.
 
-The `opencode` route accepts only `-free` models. It runs anonymously unless `OPENCODE_ZEN_API_KEY` is set, which can provide authenticated access to the same free models. To use the paid OpenCode Go route, pass a model such as `opencode-go/mimo-v2.5`. The adapter reads `OPENCODE_API_KEY` first, then the existing OpenCode `auth.json`. It never puts either key or an authorization header in the artifact.
+The host exposes three route prefixes:
 
-`--reasoning-effort low` sends that exact compatibility option to Zen and records it in the artifact. It made the current Nemotron free route return a complete action instead of exhausting its full completion budget, but Zen does not expose a numeric reasoning budget for that model. Use `--reasoning-effort provider-default` to omit the option. Do not interpret `low` as a measured amount of private reasoning; use the recorded provider token counts as the only evidence.
+- `opencode/MODEL` accepts only `-free` model IDs. It can run anonymously or use `OPENCODE_ZEN_API_KEY`.
+- `opencode-paid/MODEL` accepts only the four paid chat models pinned by this release. It requires `OPENCODE_ZEN_API_KEY` and `--max-paid-usd`.
+- `opencode-go/MODEL` uses the Go endpoint and reads `OPENCODE_API_KEY` before the existing OpenCode `auth.json`.
+
+The paid allowlist is `deepseek-v4-flash`, `minimax-m3`, `kimi-k2.6`, and `glm-5.2`. Paid runs cannot mix route types, authorize more than $0.05, or make more than four potential calls. Before reading a credential, the host applies the pinned [Zen prices](https://opencode.ai/docs/zen) to a deliberately loose input-token bound and the full requested output cap. The artifact records that estimate, the provider-reported final cost, and an uncached local calculation from reported token usage as exact decimal strings.
+
+This is a local preflight, not a provider-side dollar guarantee. Zen reports cost after a billable request, and prices or token accounting can change. When the ceiling must also exist on the provider side, use a Zen workspace or member limit.
+
+The next command can make at most four billable requests. Put a fresh Zen key on the clipboard first:
+
+```powershell
+$env:PYTHONPATH = "src"
+$env:OPENCODE_ZEN_API_KEY = (Get-Clipboard -Raw).Trim()
+try {
+  py -3.11 -m world_sim survive-live `
+    --model opencode-paid/deepseek-v4-flash `
+    --model opencode-paid/minimax-m3 `
+    --model opencode-paid/kimi-k2.6 `
+    --model opencode-paid/glm-5.2 `
+    --seed 17 --days 1 --max-calls 4 `
+    --max-completion-tokens 1024 `
+    --reasoning-effort low `
+    --max-paid-usd 0.05 `
+    --timeout-seconds 120 `
+    --show-transcript `
+    --output artifacts\live-smoke-paid-mixed-17.json
+  if ($LASTEXITCODE -ne 0) {
+    throw "paid smoke run failed; preserve the artifact and do not retry"
+  }
+} finally {
+  Remove-Item Env:OPENCODE_ZEN_API_KEY -ErrorAction SilentlyContinue
+}
+```
+
+`--reasoning-effort low` records a compatibility request, not a common reasoning treatment. The free and Go profiles send that field directly. The paid profiles pass it only to DeepSeek and GLM, disable Kimi's long-thinking mode under the 1,024-token smoke cap, and omit MiniMax's unsupported field. Each `calls[].request` object is the exact audit record. Do not compare private reasoning across these four profiles from this smoke run.
 
 ## model boundary
 
@@ -103,7 +137,7 @@ The model-facing protocol is already closed:
 
 The root keys must be exactly `action` and `say`. `say` may be `null`. Invalid action and speech components are handled independently: a malformed action becomes a paid `rest`, while malformed speech becomes silence. Neither failure earns a free retry.
 
-The model-response parser rejects duplicate JSON keys and final replies larger than 8 KiB. The adapter allows at most 4,096 completion tokens because that provider budget includes hidden reasoning before the short answer. It does not send a provider-specific reasoning control. Models use their provider default, and the artifact records provider-reported reasoning tokens when available. The world independently enforces the 500-character speech limit.
+The model-response parser rejects duplicate JSON keys and final replies larger than 8 KiB. The adapter allows at most 4,096 completion tokens because some providers count hidden reasoning before the short answer. Request profiles may apply provider-specific compatibility fields, and the artifact records both the exact request and provider-reported reasoning tokens when available. The world independently enforces the 500-character speech limit.
 
 One live decision is one direct HTTPS request. The adapter sends no tools, makes no repair call, and does not fall back to another model. An HTTP, timeout, or provider-envelope failure stops the run and leaves a failure artifact. Invalid choice JSON is model behavior: the action becomes a paid `rest`, invalid speech becomes silence, and the run continues.
 
@@ -129,6 +163,6 @@ The older Blind Commons selection experiment remains in the top-level `world_sim
 
 ## containment
 
-The world engine still has no browser, shell, filesystem, network, payment rail, or process handle. The separate host adapter can make one HTTPS model request for each living seat and day. It accepts only the two trusted OpenCode endpoints, sends only the recorded system and turn prompts, and passes the strict parsed choice into the engine. Provider names, model IDs, API keys, hidden seat IDs, and host metadata do not enter the survivor's prompt.
+The world engine still has no browser, shell, filesystem, network, payment rail, or process handle. The separate host adapter can make one HTTPS model request for each living seat and day. It accepts three explicit route prefixes mapped to two OpenCode HTTPS paths, sends only the recorded system and turn prompts, and passes the strict parsed choice into the engine. Provider names, model IDs, API keys, hidden seat IDs, and host metadata do not enter the survivor's prompt.
 
 The next useful work is several tiny smoke runs, then preregistered same-model and mixed-model controls. New interaction mechanics come one at a time only after the base ecology remains nontrivial across seeds.

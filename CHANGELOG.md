@@ -1,5 +1,11 @@
 # changelog
 
+## 0.4.3 - 2026-08-12
+
+- add an explicit `opencode-paid` Zen route for DeepSeek V4 Flash, MiniMax M3, Kimi K2.6, and GLM 5.2 with pinned model-specific chat request profiles.
+- require paid-only populations, `--max-paid-usd`, a $0.05 authorization ceiling, a conservative pinned-price preflight, and no more than four potential calls before reading credentials or contacting Zen.
+- require provider-reported cost on successful paid responses, preserve exact decimal totals, calculate the same usage against the pinned price snapshot, and retain sanitized failure receipts without retries or credential leakage.
+
 ## 0.4.2 - 2026-08-12
 
 - add an explicit `--reasoning-effort low` live-model compatibility mode while retaining `provider-default`.
