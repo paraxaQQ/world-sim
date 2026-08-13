@@ -35,7 +35,7 @@ FREE_MODELS = tuple(f"opencode/{name}-free" for name in TEST_MODEL_NAMES)
 GO_MODELS = tuple(f"opencode-go/{name}" for name in TEST_MODEL_NAMES)
 PAID_MODELS = tuple(
     f"opencode-paid/{name}"
-    for name in ("deepseek-v4-flash", "grok-4.6", "kimi-k2.6", "glm-5.2")
+    for name in ("deepseek-v4-flash", "grok-4.5", "kimi-k2.6", "glm-5.2")
 )
 GROK_MODELS = ("opencode-paid/grok-4.6",) * 4
 REST_REPLY = '{"action":{"kind":"rest"},"say":null}'
@@ -533,7 +533,7 @@ class ModelHostTests(unittest.TestCase):
         secret = "paid-zen-key-not-for-the-artifact"
         models = (
             "deepseek-v4-flash",
-            "grok-4.6",
+            "grok-4.5",
             "kimi-k2.6",
             "glm-5.2",
         )
@@ -585,7 +585,7 @@ class ModelHostTests(unittest.TestCase):
             self.assertIsInstance(endpoint, EndpointSpec)
             expected_path = (
                 "/zen/v1/responses"
-                if model == "grok-4.6"
+                if model == "grok-4.5"
                 else "/zen/v1/chat/completions"
             )
             self.assertEqual(endpoint.url, f"https://opencode.ai{expected_path}")
@@ -1073,7 +1073,7 @@ class ModelHostTests(unittest.TestCase):
 
     def test_paid_compatibility_profile_rejects_grok_before_transport(self) -> None:
         transport = FakeTransport([])
-        with self.assertRaisesRegex(ValueError, "grok-4.6 reasoning cannot be disabled"):
+        with self.assertRaisesRegex(ValueError, "grok-4.5 reasoning cannot be disabled"):
             run_live_survival(
                 model_refs=PAID_MODELS,
                 days=1,
