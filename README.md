@@ -172,6 +172,8 @@ That number is a local request bound, not a card-charge guarantee. A timeout can
 
 See the [frozen qualification protocol](outputs/v0.8.0-paid-panel-qualification-protocol.md) for the exact prompts, pass conditions, cost derivation, and stopping rules. Qualification consumes no experiment seed. Behavioral seed `29993` remains unopened unless all four adapters pass.
 
+Qualification `001` ran once on 2026-08-13. DeepSeek V4 Flash, Kimi K2.6, and GLM 5.2 passed. Grok 4.6 returned HTTP 403. All four models were attempted exactly once, and the successful calls reported `$0.00081851` in total. The Grok call has no trustworthy billing receipt, so its cost is unknown. See the [qualification proof](outputs/v0.8.0-paid-panel-qualification-001-proof.md) and [retained artifact](outputs/v0.8.0-paid-panel-qualification-001.json). No model saw the survival world, and seed `29993` remains unopened.
+
 If the panel passes, the next one-cycle survival episode can authorize at most `$1.19` for 16 calls under the same 20,000-input-token and 10,000-output-token envelope. The repository hard ceiling is `$1.20`. We freeze that behavioral command only after qualification, then run seed `29993` once without provider retries, response repairs, or behavior-based reruns.
 
 The model protocol remains strict JSON:
