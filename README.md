@@ -180,13 +180,13 @@ Qualification `001` ran once on 2026-08-13. DeepSeek V4 Flash, Kimi K2.6, and GL
 
 Qualification `002` substituted Grok 4.5 before any behavioral run. It passed 4/4 on 2026-08-13 with one call per model and no retries or repairs. The provider-reported total was `$0.00180549`; the host's larger uncached calculation and accounted exposure was `$0.00238010`. See the [qualification 002 proof](outputs/v0.8.0-paid-panel-qualification-002-proof.md) and [retained artifact](outputs/v0.8.0-paid-panel-qualification-002.json). Behavioral seed `29993` remained unopened.
 
-v0.9.0 changes the production prompt and continuation path, so session 2 requires the separately named `paid-panel-qualification-003`. Its fixed probe and panel are unchanged; the new artifact proves the changed source still reaches and parses all four production adapters. See the [frozen qualification 003 protocol](outputs/v0.9.0-paid-panel-qualification-003-protocol.md).
+v0.9.0 changes the production prompt and continuation path, so session 2 required the separately named `paid-panel-qualification-003`. Its fixed probe and panel were unchanged. Qualification `003` passed 4/4 on 2026-08-13 with one call per model and no retries or repairs. The provider-reported total was `$0.00181583`; the host's larger uncached calculation and accounted exposure was `$0.00225498`. See the [frozen protocol](outputs/v0.9.0-paid-panel-qualification-003-protocol.md), [proof](outputs/v0.9.0-paid-panel-qualification-003-proof.md), and [retained artifact](outputs/v0.9.0-paid-panel-qualification-003.json).
 
 The qualified panel was frozen for one one-cycle survival episode. Its 16-call, 20,000-input-token, and 10,000-output-token envelope was `$1.183`, so the command authorized `$1.19` under the repository's `$1.20` hard ceiling. Seed `29993` then completed once: 15 valid calls, 15 broadcast messages, zero attempted or completed costly transfers, and `$0.10711436` in provider-reported cost. See the [protocol](outputs/v0.8.0-paid-survival-29993-protocol.md), [proof](outputs/v0.8.0-paid-survival-29993-proof.md), and [retained artifact](outputs/v0.8.0-paid-survival-29993.json).
 
 ## continue the verified campaign
 
-`continue-live` derives the hidden model mapping from the parent and accepts no model override. The session-2 protocol fixes the parent hash, wood adjustment, memory-selection rule, outcome test, limits, and stopping rules:
+`continue-live` derives the hidden model mapping from the parent and accepts no model override. The session-2 protocol fixed the parent hash, wood adjustment, memory-selection rule, outcome test, limits, and stopping rules. The command below is the historical invocation retained for audit; session 2 is complete and must not be rerun.
 
 ```powershell
 $env:PYTHONPATH = "src"
@@ -210,6 +210,17 @@ try {
 ```
 
 The prior public record contains the final public statement from each identity, verbatim and explicitly unverified, plus objective counts of prior transfers and shelters. It excludes model IDs, directed speech, hidden reasoning, and private peer inventories. The session-2 transition changes only shared wood from `2` to `0`; its audit identifier is not shown to agents. See the [frozen session-2 protocol](outputs/v0.9.0-session-002-shelter-dilemma-29993-protocol.md).
+
+Session 2 completed once with nine successful calls and no retries or repairs. Birch and Aster stated the valid transfer-and-build solution, but no survivor selected a transfer. Cinder rested on chance 1, and the turn order closed the same-cycle shelter path before a resource holder heard an actionable current-cycle proposal. The engine recorded zero attempted transfers and zero shelters. Provider-reported cost was `$0.08118026`. See the [proof](outputs/v0.9.0-session-002-shelter-dilemma-29993-proof.md), [campaign ledger](docs/SESSIONS.md), and [retained artifact](outputs/v0.9.0-session-002-shelter-dilemma-29993.json).
+
+Verify the complete parent-child chain offline:
+
+```powershell
+py -3.11 tools\verify_live_artifact.py `
+  outputs\v0.9.0-session-002-shelter-dilemma-29993.json `
+  --parent outputs\v0.8.0-paid-survival-29993.json `
+  --artifact-sha256 fc0b07dfc404a2f485f3b6a2c2f191fec5e495153d6147d428d6cb251cab27fe
+```
 
 The model protocol remains strict JSON:
 
