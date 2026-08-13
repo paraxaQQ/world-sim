@@ -193,6 +193,8 @@ Use seed `29994`, a 16-call ceiling, a 300-second per-call timeout, and the `$0.
 
 The frozen protocol defines the primary outcome as the occurrence, count, and ordered trace of resolved `give_food` or `give_wood` actions. Each must cost the actor 1 energy and transfer at least one resource. Technical failure makes the episode incomplete; it does not count as zero social behavior. See the [v0.7.0 paid reasoning protocol](outputs/v0.7.0-paid-reasoning-protocol.md) for the exact command, cost derivation, stopping rule, and claim boundary.
 
+The follow-up ran once on 2026-08-13. Aster returned `gather_wood` with a broadcast about gathering wood for shelter. Birch's MiniMax M3 request then returned HTTP 400. The host stopped before the simultaneous chance resolved and did not contact Kimi or GLM. No action, message, energy cost, or transfer entered the world. See the [v0.7.0 failure proof](outputs/v0.7.0-paid-reasoning-29994-proof.md) and [retained artifact](outputs/v0.7.0-paid-reasoning-29994.json).
+
 The host accepts:
 
 - `opencode/MODEL` for `-free` Zen models

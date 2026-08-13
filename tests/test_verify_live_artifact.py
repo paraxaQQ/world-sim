@@ -17,6 +17,26 @@ SPEC.loader.exec_module(VERIFIER)
 
 
 class LiveArtifactVerifierTests(unittest.TestCase):
+    def test_failed_10k_episode_receipt_is_consistent(self) -> None:
+        artifact = (
+            REPOSITORY_ROOT
+            / "outputs"
+            / "v0.7.0-paid-reasoning-29994.json"
+        )
+
+        receipt = VERIFIER.verify_live_artifact(
+            artifact,
+            expected_artifact_sha256=(
+                "cb2164f1cb410cc617bf80188c9c90215996e9ae577240918f424fd429de3d0c"
+            ),
+        )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["failure_kind"], "http_error")
+        self.assertTrue(receipt["failure_call_receipt_consistent"])
+        self.assertIsNone(receipt["exact_replay"])
+        self.assertEqual(receipt["source_hashes_matched"], 8)
+
     def test_failed_paid_episode_receipt_is_consistent(self) -> None:
         artifact = (
             REPOSITORY_ROOT
