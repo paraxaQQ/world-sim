@@ -27,6 +27,7 @@ from .survival.engine import (
 from .survival.models import (
     DEFAULT_SURVIVOR_NAMES,
     GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
     SurvivalConfig,
     SurvivalResult,
     SurvivalWorld,
@@ -40,7 +41,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.11.0"
+WORLD_SIM_VERSION = "0.12.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -57,7 +58,7 @@ PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("1.20")
 QUALIFICATION_MAX_AUTHORIZATION_USD = Decimal("0.30")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 USD_COST_TICKS_PER_USD = Decimal("10000000000")
-QUALIFICATION_ID = "paid-panel-qualification-003"
+QUALIFICATION_ID = "paid-model-qualification-004"
 QUALIFICATION_PROTOCOL = "world-sim-adapter-v1"
 QUALIFICATION_SYSTEM_PROMPT = (
     "You are performing an API compatibility check, not a game or decision task.\n"
@@ -73,6 +74,8 @@ PAID_QUALIFICATION_MODELS = (
     "opencode-paid/kimi-k2.6",
     "opencode-paid/glm-5.2",
 )
+LUNA_MODEL_REF = "opencode-paid/gpt-5.6-luna"
+QUALIFICATION_ALLOWED_MODELS = (*PAID_QUALIFICATION_MODELS, LUNA_MODEL_REF)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_FILES = {
@@ -99,6 +102,7 @@ PAID_ZEN_PRICES = {
     "grok-4.6": ModelPrice(Decimal("2.00"), Decimal("6.00")),
     "kimi-k2.6": ModelPrice(Decimal("0.95"), Decimal("4.00")),
     "glm-5.2": ModelPrice(Decimal("1.40"), Decimal("4.40")),
+    "gpt-5.6-luna": ModelPrice(Decimal("0.20"), Decimal("1.20")),
 }
 
 
@@ -409,6 +413,15 @@ class _LiveProvider(SurvivalChoiceProvider):
                 response,
                 cost_authorization,
             )
+        if metadata["provider_model"] != self.assignment.model_id:
+            self._fail(
+                view,
+                request,
+                "provider_model_error",
+                "provider model identity does not match the requested model",
+                response,
+                cost_authorization,
+            )
         if self.assignment.endpoint.provider == "opencode-paid":
             if metadata["provider_reported_cost_usd"] is None:
                 self._fail(
@@ -550,6 +563,101 @@ class _LiveProvider(SurvivalChoiceProvider):
             self.checkpoint()
         finally:
             self.calls.pop()
+
+
+@dataclass
+class _RecordedV6Provider(SurvivalChoiceProvider):
+    assignment: _Assignment
+    calls: Sequence[Mapping[str, object]]
+    cursor: list[int]
+    max_completion_tokens: int
+    temperature: float
+    reasoning_effort: str | None
+    paid_budget: _PaidBudget | None
+
+    def decide(self, view: SurvivorView) -> Mapping[str, object]:
+        index = self.cursor[0]
+        if index >= len(self.calls):
+            raise ValueError("format-v6 calls end before reconstructed execution")
+        call = self.calls[index]
+        expected_identity = {
+            "sequence": index + 1,
+            "day": view.day,
+            "cycle": view.day,
+            "slot": view.slot,
+            "seat_id": self.assignment.seat_id,
+            "public_name": self.assignment.public_name,
+            "model": self.assignment.model_ref,
+            "endpoint": self.assignment.endpoint.url,
+            "status": "succeeded",
+        }
+        for key, expected in expected_identity.items():
+            if call.get(key) != expected:
+                raise ValueError(
+                    f"format-v6 call {index + 1} {key} does not match replay"
+                )
+        expected_request = _build_request(
+            self.assignment,
+            view,
+            max_completion_tokens=self.max_completion_tokens,
+            temperature=self.temperature,
+            reasoning_effort=self.reasoning_effort,
+        )
+        normalized_expected_request = _strict_json(
+            json.dumps(
+                expected_request,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        raw_request = call.get("request")
+        if (
+            not isinstance(raw_request, Mapping)
+            or not isinstance(normalized_expected_request, Mapping)
+            or dict(raw_request) != dict(normalized_expected_request)
+        ):
+            raise ValueError(
+                f"format-v6 call {index + 1} request does not match its replay view"
+            )
+        response = call.get("response")
+        if not isinstance(response, Mapping):
+            raise ValueError(f"format-v6 call {index + 1} has no response receipt")
+        if response.get("provider_model") != self.assignment.model_id:
+            raise ValueError(
+                f"format-v6 call {index + 1} provider model does not match assignment"
+            )
+        model_reply = response.get("model_reply")
+        if not isinstance(model_reply, str):
+            raise ValueError(f"format-v6 call {index + 1} has no model reply")
+        parsed = parse_model_response(
+            model_reply,
+            actor=view.name,
+            living_peers=tuple(str(peer["name"]) for peer in view.others),
+            max_food_eaten=int(view.rules["max_food_eaten"]),
+            max_speech_chars=int(view.rules["max_speech_chars"]),
+            interaction_protocol=view.interaction_protocol,
+        )
+        parsed_choice = parsed.to_dict()
+        if call.get("parsed_choice") != parsed_choice:
+            raise ValueError(
+                f"format-v6 call {index + 1} parsed choice does not match model reply"
+            )
+        if call.get("validation") != {
+            "action_error": parsed.action_error,
+            "speech_error": parsed.speech_error,
+        }:
+            raise ValueError(
+                f"format-v6 call {index + 1} validation does not match model reply"
+            )
+        _verify_recorded_cost_authorization(
+            assignment=self.assignment,
+            request=expected_request,
+            record=call,
+            paid_budget=self.paid_budget,
+            successful=True,
+        )
+        self.cursor[0] += 1
+        return parsed_choice
 
 
 def run_live_survival(
@@ -837,6 +945,9 @@ def run_live_survival_continuation(
     shared_resource: str = "wood",
     shared_stock: int = 0,
     transition_reason: str,
+    interaction_protocol: str = GLOBAL_BEATS_V2,
+    model_replacements: Sequence[str] = (),
+    replacement_reason: str | None = None,
     max_calls: int = DEFAULT_LIVE_MAX_CALLS,
     max_completion_tokens: int = DEFAULT_LIVE_MAX_COMPLETION_TOKENS,
     temperature: float = DEFAULT_LIVE_TEMPERATURE,
@@ -854,11 +965,32 @@ def run_live_survival_continuation(
         expected_sha256=expected_parent_sha256,
         ancestor_paths=ancestor_paths,
     )
-    assignments = _verified_parent_assignments(parent_artifact, parent_result)
+    parent_assignments = _verified_parent_assignments(parent_artifact, parent_result)
+    if (
+        parent_artifact["format_version"] == 3
+        and interaction_protocol == SEQUENTIAL_DIALOGUE_V3
+    ):
+        raise ValueError(
+            "sequential-dialogue-v3 requires a verified continuation parent"
+        )
+    if (
+        parent_artifact["format_version"] == 6
+        and interaction_protocol != SEQUENTIAL_DIALOGUE_V3
+    ):
+        raise ValueError(
+            "format-v6 parent must continue with interaction_protocol "
+            "sequential-dialogue-v3"
+        )
+    assignments, assignment_transition_receipts = _apply_model_replacements(
+        parent_assignments,
+        model_replacements=model_replacements,
+        replacement_reason=replacement_reason,
+        interaction_protocol=interaction_protocol,
+    )
     world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,
-        interaction_protocol=GLOBAL_BEATS_V2,
+        interaction_protocol=interaction_protocol,
     )
     transition_event = adjust_shared_resource(
         world,
@@ -954,7 +1086,9 @@ def run_live_survival_continuation(
     }
     base = {
         "format_version": (
-            4 if parent_artifact["format_version"] == 3 else 5
+            6
+            if interaction_protocol == SEQUENTIAL_DIALOGUE_V3
+            else 4 if parent_artifact["format_version"] == 3 else 5
         ),
         "mode": "live_named_survival_continuation",
         "adapter": ADAPTER_NAME,
@@ -984,6 +1118,11 @@ def run_live_survival_continuation(
             ),
         },
         "continuation_link": continuation_link,
+        **(
+            {"assignment_transition_receipts": assignment_transition_receipts}
+            if interaction_protocol == SEQUENTIAL_DIALOGUE_V3
+            else {}
+        ),
         "transition_receipt": transition_receipt,
         "public_record_receipt": public_record_receipt,
         "config": {
@@ -1167,17 +1306,24 @@ def run_paid_adapter_qualification(
     model_refs: Sequence[str],
     max_completion_tokens: int = MODEL_MAX_COMPLETION_TOKENS,
     temperature: float = DEFAULT_LIVE_TEMPERATURE,
+    reasoning_effort: str = DEFAULT_LIVE_REASONING_EFFORT,
     max_paid_usd: Decimal | str = QUALIFICATION_MAX_AUTHORIZATION_USD,
     timeout_seconds: float = 300.0,
     transport: ChatTransport | None = None,
     environ: Mapping[str, str] | None = None,
     checkpoint: Callable[[Mapping[str, object]], None] | None = None,
 ) -> dict[str, Any]:
-    assignments = _assign_models(model_refs)
+    assignments = _assign_models(
+        model_refs,
+        minimum=1,
+        maximum=4,
+        context="qualify-live",
+    )
     _validate_qualification_config(
         assignments,
         max_completion_tokens=max_completion_tokens,
         temperature=temperature,
+        reasoning_effort=reasoning_effort,
         max_paid_usd=max_paid_usd,
         timeout_seconds=timeout_seconds,
     )
@@ -1186,6 +1332,7 @@ def run_paid_adapter_qualification(
             assignment,
             max_completion_tokens=max_completion_tokens,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
         )
         for assignment in assignments
     )
@@ -1207,6 +1354,7 @@ def run_paid_adapter_qualification(
             model_refs=model_refs,
             max_completion_tokens=max_completion_tokens,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
             timeout_seconds=timeout_seconds,
             paid_limit=paid_limit,
             paid_preflight=paid_preflight,
@@ -1261,6 +1409,7 @@ def _qualification_artifact(
     model_refs: Sequence[str],
     max_completion_tokens: int,
     temperature: float,
+    reasoning_effort: str,
     timeout_seconds: float,
     paid_limit: Decimal,
     paid_preflight: Mapping[str, object],
@@ -1290,7 +1439,7 @@ def _qualification_artifact(
         "config": {
             "models": list(model_refs),
             "max_completion_tokens": max_completion_tokens,
-            "reasoning_effort": "provider-default",
+            "reasoning_effort": reasoning_effort,
             "temperature": temperature,
             "timeout_seconds": timeout_seconds,
             "attempts_per_model": 1,
@@ -1323,16 +1472,19 @@ def _validate_qualification_config(
     *,
     max_completion_tokens: int,
     temperature: float,
+    reasoning_effort: str,
     max_paid_usd: Decimal | str,
     timeout_seconds: float,
 ) -> None:
-    if tuple(assignment.model_ref for assignment in assignments) != PAID_QUALIFICATION_MODELS:
+    model_refs = tuple(assignment.model_ref for assignment in assignments)
+    if len(set(model_refs)) != len(model_refs):
+        raise ValueError("qualify-live model assignments must be unique")
+    if any(model_ref not in QUALIFICATION_ALLOWED_MODELS for model_ref in model_refs):
+        raise ValueError("qualify-live model is not in the qualification allowlist")
+    if not 1 <= max_completion_tokens <= MODEL_MAX_COMPLETION_TOKENS:
         raise ValueError(
-            "qualify-live requires the frozen paid panel in protocol order"
-        )
-    if max_completion_tokens != MODEL_MAX_COMPLETION_TOKENS:
-        raise ValueError(
-            f"qualify-live requires {MODEL_MAX_COMPLETION_TOKENS} completion tokens"
+            "qualify-live max_completion_tokens must be from 1 through "
+            f"{MODEL_MAX_COMPLETION_TOKENS}"
         )
     if temperature != DEFAULT_LIVE_TEMPERATURE:
         raise ValueError(
@@ -1340,11 +1492,15 @@ def _validate_qualification_config(
         )
     if timeout_seconds != 300.0:
         raise ValueError("qualify-live requires a 300-second timeout")
+    if reasoning_effort not in {"provider-default", "low"}:
+        raise ValueError("qualify-live reasoning_effort must be provider-default or low")
+    if LUNA_MODEL_REF in model_refs and reasoning_effort != "low":
+        raise ValueError("gpt-5.6-luna qualification requires reasoning_effort low")
     limit = _parse_positive_decimal(max_paid_usd, name="max_paid_usd")
-    if limit != QUALIFICATION_MAX_AUTHORIZATION_USD:
+    if limit > QUALIFICATION_MAX_AUTHORIZATION_USD:
         raise ValueError(
-            "qualify-live requires --max-paid-usd "
-            f"{_decimal_text(QUALIFICATION_MAX_AUTHORIZATION_USD)}"
+            "qualify-live authorization cannot exceed "
+            f"{_decimal_text(QUALIFICATION_MAX_AUTHORIZATION_USD)} USD"
         )
 
 
@@ -1365,6 +1521,7 @@ def _build_qualification_request(
     *,
     max_completion_tokens: int,
     temperature: float,
+    reasoning_effort: str,
 ) -> dict[str, object]:
     return _build_provider_request(
         assignment,
@@ -1374,7 +1531,9 @@ def _build_qualification_request(
         ],
         max_completion_tokens=max_completion_tokens,
         temperature=temperature,
-        reasoning_effort=None,
+        reasoning_effort=(
+            None if reasoning_effort == "provider-default" else reasoning_effort
+        ),
         json_schema=_qualification_schema(),
         schema_name="adapter_qualification",
     )
@@ -1704,6 +1863,25 @@ def _build_provider_request(
     schema_name: str,
 ) -> dict[str, object]:
     if assignment.endpoint.provider == "opencode-paid":
+        if assignment.model_id == "gpt-5.6-luna":
+            if reasoning_effort != "low":
+                raise ValueError("gpt-5.6-luna requires reasoning_effort low")
+            return {
+                "model": assignment.model_id,
+                "input": messages,
+                "max_output_tokens": max_completion_tokens,
+                "reasoning": {"effort": "low"},
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": schema_name,
+                        "schema": dict(json_schema),
+                        "strict": True,
+                    }
+                },
+                "stream": False,
+                "store": False,
+            }
         if assignment.model_id in {"grok-4.5", "grok-4.6"}:
             if reasoning_effort == "compatibility-first":
                 raise ValueError(
@@ -1819,6 +1997,78 @@ def _paid_request_bound(
     )
 
 
+def _recorded_paid_budget(config: Mapping[str, object]) -> _PaidBudget | None:
+    raw_limit = config.get("max_paid_usd")
+    if raw_limit is None:
+        return None
+    limit = _parse_positive_decimal(raw_limit, name="recorded max_paid_usd")
+    if limit > PAID_ZEN_MAX_AUTHORIZATION_USD:
+        raise ValueError("recorded paid authorization exceeds the hard ceiling")
+    return _PaidBudget(limit)
+
+
+def _recorded_cost_decimal(value: object, *, name: str) -> Decimal:
+    if not isinstance(value, str):
+        raise ValueError(f"{name} must be canonical decimal text")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError(f"{name} must be canonical decimal text") from error
+    if (
+        not parsed.is_finite()
+        or parsed < 0
+        or _decimal_text(parsed) != value
+    ):
+        raise ValueError(f"{name} must be canonical non-negative decimal text")
+    return parsed
+
+
+def _verify_recorded_cost_authorization(
+    *,
+    assignment: _Assignment,
+    request: Mapping[str, object],
+    record: Mapping[str, object],
+    paid_budget: _PaidBudget | None,
+    successful: bool,
+) -> None:
+    if assignment.endpoint.provider != "opencode-paid":
+        if "cost_authorization" in record:
+            raise ValueError("non-paid call cannot contain cost authorization")
+        return
+    if paid_budget is None:
+        raise ValueError("paid call has no recorded paid authorization limit")
+    raw_authorization = record.get("cost_authorization")
+    if not isinstance(raw_authorization, Mapping):
+        raise ValueError("paid call has no cost authorization receipt")
+    expected = paid_budget.quote(assignment, request)
+    if successful:
+        response = record.get("response")
+        if not isinstance(response, Mapping):
+            raise ValueError("successful paid call has no response receipt")
+        provider_cost = _recorded_cost_decimal(
+            response.get("provider_reported_cost_usd"),
+            name="provider_reported_cost_usd",
+        )
+        try:
+            calculated_text = _calculate_usage_cost(
+                assignment.model_id,
+                response.get("usage"),
+            )
+        except EnvelopeFailure as error:
+            raise ValueError("successful paid call usage cannot be priced") from error
+        if response.get("uncached_calculated_cost_usd") != calculated_text:
+            raise ValueError("successful paid call calculated cost is inconsistent")
+        within_bound = paid_budget.account(
+            expected,
+            provider_cost=provider_cost,
+            calculated_cost=Decimal(calculated_text),
+        )
+        if not within_bound:
+            raise ValueError("successful paid call exceeded its request cost bound")
+    if dict(raw_authorization) != expected:
+        raise ValueError("paid call cost authorization does not reconstruct exactly")
+
+
 def _paid_preflight(
     *,
     assignments: Sequence[_Assignment],
@@ -1913,7 +2163,11 @@ def _paid_preflight(
         "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
         "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
         "runtime_gate": "exact_request_before_every_paid_transport",
-        "cost_bound_scope": "first_simultaneous_chance_only",
+        "cost_bound_scope": (
+            "initial_sequential_dialogue_view_per_paid_model"
+            if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3
+            else "first_simultaneous_chance_only"
+        ),
         "calls": rows,
         "authorized_calls": max_calls,
         "world_max_calls": world_max_calls,
@@ -1944,20 +2198,28 @@ def _load_verified_parent_artifact(
     if parent_format == 3:
         if ancestor_paths:
             raise ValueError("format-v3 parent does not accept ancestor paths")
-    elif parent_format in {4, 5}:
+    elif parent_format in {4, 5, 6}:
         if not ancestor_paths:
             raise ValueError(
                 f"format-v{parent_format} parent requires its ancestor chain"
             )
     else:
-        raise ValueError("parent artifact format_version must be 3, 4, or 5")
+        raise ValueError("parent artifact format_version must be 3, 4, 5, or 6")
 
     formats = [artifact.get("format_version") for artifact, _ in chain]
-    expected_formats = [3]
-    if len(chain) >= 2:
-        expected_formats.append(4)
-    expected_formats.extend([5] * max(0, len(chain) - 2))
-    if formats != expected_formats:
+    valid_formats = formats[:1] == [3]
+    for parent, child in zip(formats, formats[1:], strict=False):
+        if parent == 3 and child == 6:
+            valid_formats = False
+            break
+        legacy_child = 4 if parent == 3 else 5
+        if child != legacy_child and child != 6:
+            valid_formats = False
+            break
+        if parent == 6 and child != 6:
+            valid_formats = False
+            break
+    if not valid_formats:
         raise ValueError(
             "ancestor paths must be complete and ordered oldest to newest "
             "before the direct parent"
@@ -1972,7 +2234,7 @@ def _load_verified_parent_artifact(
         expected_format=3,
         expected_mode="live_named_survival",
     )
-    _verified_parent_assignments(root_artifact, root_result)
+    verified_assignments = _verified_parent_assignments(root_artifact, root_result)
     verified_result = root_result
     for index in range(1, len(chain)):
         child_artifact, _ = chain[index]
@@ -1984,7 +2246,16 @@ def _load_verified_parent_artifact(
             parent_sha256=previous_sha256,
             parent_result=verified_result,
         )
-        _verified_parent_assignments(child_artifact, verified_result)
+        child_assignments = _verified_parent_assignments(
+            child_artifact,
+            verified_result,
+        )
+        _verify_assignment_transition(
+            child_artifact,
+            parent_assignments=verified_assignments,
+            child_assignments=child_assignments,
+        )
+        verified_assignments = child_assignments
     return parent_artifact, verified_result, actual_sha256
 
 
@@ -2041,7 +2312,10 @@ def _verify_continuation_boundary(
     parent_result: SurvivalResult,
 ) -> SurvivalResult:
     parent_format = parent_artifact.get("format_version")
-    expected_format = 4 if parent_format == 3 else 5
+    child_format = artifact.get("format_version")
+    expected_format = (
+        6 if child_format == 6 else 4 if parent_format == 3 else 5
+    )
     child_result = _verify_completed_live_result(
         artifact,
         expected_format=expected_format,
@@ -2194,7 +2468,84 @@ def _verify_continuation_boundary(
         offset=child_result.event_sequence_base,
         name="parent result events",
     )
+    if child_format == 6:
+        _verify_v6_calls_reconstruct_result(
+            artifact,
+            world=expected_world,
+            expected_result=child_result,
+            additional_cycles=additional_cycles,
+        )
     return child_result
+
+
+def _verify_v6_calls_reconstruct_result(
+    artifact: Mapping[str, object],
+    *,
+    world: SurvivalWorld,
+    expected_result: SurvivalResult,
+    additional_cycles: int,
+) -> None:
+    config = artifact.get("config")
+    calls = artifact.get("calls")
+    if not isinstance(config, Mapping) or not isinstance(calls, list) or not all(
+        isinstance(call, Mapping) for call in calls
+    ):
+        raise ValueError("format-v6 call replay inputs are invalid")
+    max_completion_tokens = config.get("max_completion_tokens")
+    raw_temperature = config.get("temperature")
+    reasoning_effort = config.get("reasoning_effort")
+    if (
+        isinstance(max_completion_tokens, bool)
+        or not isinstance(max_completion_tokens, int)
+        or not isinstance(reasoning_effort, str)
+        or reasoning_effort not in LIVE_REASONING_EFFORTS
+    ):
+        raise ValueError("format-v6 request configuration is invalid")
+    if isinstance(raw_temperature, bool):
+        raise ValueError("format-v6 request temperature is invalid")
+    try:
+        temperature = float(raw_temperature)
+    except (TypeError, ValueError) as error:
+        raise ValueError("format-v6 request temperature is invalid") from error
+    if not 0.0 <= temperature <= 2.0:
+        raise ValueError("format-v6 request temperature is invalid")
+    assignments = _verified_parent_assignments(artifact, expected_result)
+    active_names = set(world.alive_names())
+    active_assignments = tuple(
+        assignment
+        for assignment in assignments
+        if assignment.public_name in active_names
+    )
+    paid_budget = _recorded_paid_budget(config)
+    cursor = [0]
+    providers = {
+        assignment.public_name: _RecordedV6Provider(
+            assignment=assignment,
+            calls=calls,
+            cursor=cursor,
+            max_completion_tokens=max_completion_tokens,
+            temperature=temperature,
+            reasoning_effort=(
+                None if reasoning_effort == "provider-default" else reasoning_effort
+            ),
+            paid_budget=paid_budget,
+        )
+        for assignment in active_assignments
+    }
+    try:
+        reconstructed = run_survival(
+            deepcopy(world),
+            providers,
+            days=additional_cycles,
+        )
+    except RuntimeError as error:
+        if isinstance(error.__cause__, ValueError):
+            raise error.__cause__
+        raise
+    if cursor[0] != len(calls):
+        raise ValueError("format-v6 calls contain entries not consumed by replay")
+    if reconstructed.to_dict() != expected_result.to_dict():
+        raise ValueError("format-v6 calls do not reconstruct the recorded result")
 
 
 def _verify_contiguous_event_records(
@@ -2391,6 +2742,85 @@ def _verified_parent_assignments(
     return assignments
 
 
+def _verify_assignment_transition(
+    artifact: Mapping[str, object],
+    *,
+    parent_assignments: Sequence[_Assignment],
+    child_assignments: Sequence[_Assignment],
+) -> None:
+    format_version = artifact.get("format_version")
+    raw_receipts = artifact.get("assignment_transition_receipts")
+    if format_version != 6:
+        if raw_receipts is not None:
+            raise ValueError(
+                "legacy continuation cannot contain assignment transition receipts"
+            )
+        return
+
+    config = artifact.get("config")
+    if not isinstance(config, Mapping) or (
+        config.get("interaction_protocol") != SEQUENTIAL_DIALOGUE_V3
+    ):
+        raise ValueError("format-v6 continuation must use sequential-dialogue-v3")
+    if (
+        not isinstance(raw_receipts, list)
+        or len(raw_receipts) > 1
+        or not all(isinstance(receipt, Mapping) for receipt in raw_receipts)
+    ):
+        raise ValueError(
+            "format-v6 assignment transition receipts must contain at most one object"
+        )
+    if not raw_receipts:
+        if [assignment.to_dict() for assignment in parent_assignments] != [
+            assignment.to_dict() for assignment in child_assignments
+        ]:
+            raise ValueError(
+                "assignment transition changed without a matching receipt"
+            )
+        return
+    receipt = raw_receipts[0]
+    expected_keys = {
+        "seat_id",
+        "public_name",
+        "previous_model",
+        "replacement_model",
+        "reason",
+    }
+    if set(receipt) != expected_keys:
+        raise ValueError("assignment transition receipt has unexpected fields")
+    _validate_replacement_reason(receipt["reason"])
+
+    parent_by_seat = {
+        assignment.seat_id: assignment for assignment in parent_assignments
+    }
+    child_by_seat = {
+        assignment.seat_id: assignment for assignment in child_assignments
+    }
+    if set(parent_by_seat) != set(child_by_seat):
+        raise ValueError("assignment transition changed the verified seat set")
+    changed = [
+        seat_id
+        for seat_id in parent_by_seat
+        if parent_by_seat[seat_id].to_dict() != child_by_seat[seat_id].to_dict()
+    ]
+    if len(changed) != 1:
+        raise ValueError("assignment transition must change exactly one verified seat")
+    seat_id = changed[0]
+    previous = parent_by_seat[seat_id]
+    replacement = child_by_seat[seat_id]
+    expected = {
+        "seat_id": seat_id,
+        "public_name": previous.public_name,
+        "previous_model": previous.model_ref,
+        "replacement_model": replacement.model_ref,
+        "reason": receipt["reason"],
+    }
+    if previous.public_name != replacement.public_name or dict(receipt) != expected:
+        raise ValueError(
+            "assignment transition receipt does not match the verified parent and child"
+        )
+
+
 def _continuation_outcomes(result: SurvivalResult) -> dict[str, object]:
     transfers = [
         event for event in result.events if event.get("kind") == "resource_given"
@@ -2554,31 +2984,124 @@ def _continuation_outcomes(result: SurvivalResult) -> dict[str, object]:
     }
 
 
-def _assign_models(model_refs: Sequence[str]) -> tuple[_Assignment, ...]:
+def _apply_model_replacements(
+    assignments: Sequence[_Assignment],
+    *,
+    model_replacements: Sequence[str],
+    replacement_reason: str | None,
+    interaction_protocol: str,
+) -> tuple[tuple[_Assignment, ...], list[dict[str, str]]]:
+    replacements = tuple(model_replacements)
+    if interaction_protocol == GLOBAL_BEATS_V2:
+        if replacements or replacement_reason is not None:
+            raise ValueError(
+                "model replacement requires interaction_protocol sequential-dialogue-v3"
+            )
+        return tuple(assignments), []
+    if interaction_protocol != SEQUENTIAL_DIALOGUE_V3:
+        raise ValueError(
+            "interaction_protocol must be global-beats-v2 or sequential-dialogue-v3"
+        )
+    if len(replacements) > 1:
+        raise ValueError("sequential-dialogue-v3 accepts at most one model replacement")
+    if not replacements:
+        if replacement_reason is not None:
+            raise ValueError(
+                "replacement_reason requires a model replacement"
+            )
+        return tuple(assignments), []
+    _validate_replacement_reason(replacement_reason)
+    assert isinstance(replacement_reason, str)
+
+    replacement = replacements[0]
+    if not isinstance(replacement, str) or replacement.count("=") != 1:
+        raise ValueError("model replacement must use PUBLIC_NAME=PROVIDER/MODEL")
+    public_name, model_ref = replacement.split("=", 1)
+    if not public_name or public_name != public_name.strip():
+        raise ValueError("model replacement public identity is invalid")
+    if not model_ref or model_ref != model_ref.strip():
+        raise ValueError("model replacement model is invalid")
+
+    by_name = {assignment.public_name: assignment for assignment in assignments}
+    if public_name not in by_name:
+        raise ValueError(f"model replacement refers to unknown identity {public_name!r}")
+    previous = by_name[public_name]
+    if model_ref == previous.model_ref:
+        raise ValueError("model replacement must change the assigned model")
+    endpoint, model_id = _parse_model_ref(model_ref)
+    replacement_assignment = _Assignment(
+        previous.seat_id,
+        previous.public_name,
+        model_ref,
+        endpoint,
+        model_id,
+    )
+    updated = tuple(
+        replacement_assignment if assignment.seat_id == previous.seat_id else assignment
+        for assignment in assignments
+    )
+    receipt = {
+        "seat_id": previous.seat_id,
+        "public_name": previous.public_name,
+        "previous_model": previous.model_ref,
+        "replacement_model": model_ref,
+        "reason": replacement_reason,
+    }
+    return updated, [receipt]
+
+
+def _validate_replacement_reason(reason: object) -> None:
+    if (
+        not isinstance(reason, str)
+        or not reason
+        or reason != reason.strip()
+        or len(reason) > 500
+        or not reason.isprintable()
+    ):
+        raise ValueError(
+            "replacement_reason must be 1-500 printable characters without outer whitespace"
+        )
+
+
+def _parse_model_ref(model_ref: str) -> tuple[EndpointSpec, str]:
+    provider, separator, model_id = model_ref.partition("/")
+    if not separator or provider not in _ENDPOINTS:
+        raise ValueError(
+            f"model {model_ref!r} must use opencode/MODEL, "
+            "opencode-paid/MODEL, or opencode-go/MODEL"
+        )
+    if not model_id or len(model_id) > 128:
+        raise ValueError(f"model {model_ref!r} has an invalid model ID")
+    if provider == "opencode" and not model_id.endswith("-free"):
+        raise ValueError("the unauthenticated opencode endpoint only accepts -free models")
+    if provider == "opencode-paid" and model_id.endswith("-free"):
+        raise ValueError("the opencode-paid endpoint does not accept -free models")
+    endpoint = (
+        _PAID_RESPONSES_ENDPOINT
+        if provider == "opencode-paid"
+        and model_id in {"grok-4.5", "grok-4.6", "gpt-5.6-luna"}
+        else _ENDPOINTS[provider]
+    )
+    return endpoint, model_id
+
+
+def _assign_models(
+    model_refs: Sequence[str],
+    *,
+    minimum: int = 2,
+    maximum: int = len(DEFAULT_SURVIVOR_NAMES),
+    context: str = "survive-live",
+) -> tuple[_Assignment, ...]:
     refs = tuple(reference.strip() for reference in model_refs)
-    if not 2 <= len(refs) <= len(DEFAULT_SURVIVOR_NAMES):
-        raise ValueError("survive-live needs between 2 and 8 model assignments")
+    if not minimum <= len(refs) <= maximum:
+        raise ValueError(
+            f"{context} needs between {minimum} and {maximum} model assignments"
+        )
     assignments = []
     for index, (name, model_ref) in enumerate(
         zip(DEFAULT_SURVIVOR_NAMES[: len(refs)], refs, strict=True), start=1
     ):
-        provider, separator, model_id = model_ref.partition("/")
-        if not separator or provider not in _ENDPOINTS:
-            raise ValueError(
-                f"model {model_ref!r} must use opencode/MODEL, "
-                "opencode-paid/MODEL, or opencode-go/MODEL"
-            )
-        if not model_id or len(model_id) > 128:
-            raise ValueError(f"model {model_ref!r} has an invalid model ID")
-        if provider == "opencode" and not model_id.endswith("-free"):
-            raise ValueError("the unauthenticated opencode endpoint only accepts -free models")
-        if provider == "opencode-paid" and model_id.endswith("-free"):
-            raise ValueError("the opencode-paid endpoint does not accept -free models")
-        endpoint = (
-            _PAID_RESPONSES_ENDPOINT
-            if provider == "opencode-paid" and model_id in {"grok-4.5", "grok-4.6"}
-            else _ENDPOINTS[provider]
-        )
+        endpoint, model_id = _parse_model_ref(model_ref)
         assignments.append(
             _Assignment(
                 f"seat-{index:03d}", name, model_ref, endpoint, model_id

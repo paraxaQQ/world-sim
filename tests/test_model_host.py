@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -35,6 +36,7 @@ from world_sim.survival.engine import (
 )
 from world_sim.survival.models import (
     GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
     SLOTS_V1,
     SurvivalResult,
 )
@@ -146,9 +148,15 @@ def paid_panel_response(
 
 
 class FakeTransport(ChatTransport):
-    def __init__(self, responses: Sequence[TransportResponse]) -> None:
+    def __init__(
+        self,
+        responses: Sequence[TransportResponse],
+        *,
+        align_provider_model: bool = True,
+    ) -> None:
         self.responses = list(responses)
         self.requests: list[dict[str, object]] = []
+        self.align_provider_model = align_provider_model
 
     def post(
         self,
@@ -168,7 +176,23 @@ class FakeTransport(ChatTransport):
         )
         if not self.responses:
             raise AssertionError("unexpected extra model request")
-        return self.responses.pop(0)
+        response_receipt = self.responses.pop(0)
+        if not self.align_provider_model or response_receipt.status != 200:
+            return response_receipt
+        model_text = json.dumps(str(request_body["model"]))
+        body, replacements = re.subn(
+            r'("model"\s*:\s*)"(?:\\.|[^"\\])*"',
+            lambda match: match.group(1) + model_text,
+            response_receipt.body,
+            count=1,
+        )
+        if replacements != 1:
+            return response_receipt
+        return TransportResponse(
+            status=response_receipt.status,
+            headers=response_receipt.headers,
+            body=body,
+        )
 
 
 class BrokenTransport(ChatTransport):
@@ -299,6 +323,111 @@ class ModelHostTests(unittest.TestCase):
             )
             chain.append((direct_path, direct_sha256, artifact))
         return chain
+
+    def _paid_v4_parent(
+        self,
+        directory: str,
+    ) -> tuple[Path, Path, str, dict[str, object]]:
+        root_replies = tuple(
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+            + name
+            + ' paid root note"}}'
+            for name in ("Aster", "Birch", "Cinder", "Lumen")
+        )
+        root = run_live_survival(
+            model_refs=PAID_MODELS,
+            seed=29_993,
+            days=1,
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="low",
+            max_paid_usd="0.30",
+            transport=FakeTransport(
+                [
+                    paid_panel_response(index, reply, cost="0.001")
+                    for index, reply in enumerate(root_replies)
+                ]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+        )
+        root_path, root_sha256 = self._write_parent(
+            directory,
+            root,
+            "paid-session-001.json",
+        )
+        parent_replies = tuple(
+            '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+            + name
+            + ' paid continuation note"}}'
+            for name in ("Aster", "Birch", "Cinder", "Lumen")
+        )
+        parent = run_live_survival_continuation(
+            parent_path=root_path,
+            expected_parent_sha256=root_sha256,
+            transition_reason="session_002_paid_parent",
+            max_calls=4,
+            max_completion_tokens=1_024,
+            reasoning_effort="low",
+            max_paid_usd="0.30",
+            transport=FakeTransport(
+                [
+                    paid_panel_response(index, reply, cost="0.001")
+                    for index, reply in enumerate(parent_replies)
+                ]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+        )
+        parent_path, parent_sha256 = self._write_parent(
+            directory,
+            parent,
+            "paid-session-002.json",
+        )
+        return root_path, parent_path, parent_sha256, parent
+
+    def _paid_v6_parent(
+        self,
+        directory: str,
+    ) -> tuple[Path, Path, Path, str, dict[str, object]]:
+        root_path, v4_path, v4_sha256, _ = self._paid_v4_parent(directory)
+        replies = {
+            name: (
+                '{"action":{"kind":"rest"},"say":{"to":"everyone","text":"'
+                + name
+                + ' sequential note"}}'
+            )
+            for name in ("Aster", "Birch", "Cinder", "Lumen")
+        }
+        v6 = run_live_survival_continuation(
+            parent_path=v4_path,
+            expected_parent_sha256=v4_sha256,
+            ancestor_paths=(root_path,),
+            transition_reason="session_004_sequential_parent",
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+            model_replacements=(
+                "Cinder=opencode-paid/gpt-5.6-luna",
+            ),
+            replacement_reason="replace the adapter that exhausted its budget",
+            max_calls=4,
+            max_completion_tokens=4_096,
+            reasoning_effort="low",
+            max_paid_usd="0.30",
+            transport=FakeTransport(
+                [
+                    responses_response(replies["Cinder"], cost="0.001"),
+                    response(replies["Lumen"], cost="0.001"),
+                    response(replies["Aster"], cost="0.001"),
+                    responses_response(replies["Birch"], cost="0.001"),
+                ]
+            ),
+            environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+        )
+        self.assertEqual(v6["status"], "completed")
+        v6_path, v6_sha256 = self._write_parent(
+            directory,
+            v6,
+            "paid-session-004.json",
+        )
+        return root_path, v4_path, v6_path, v6_sha256, v6
 
     def test_live_first_beat_uses_frozen_views_and_next_beat_hears_speech(
         self,
@@ -571,6 +700,12 @@ class ModelHostTests(unittest.TestCase):
                     parent_path=parent_path,
                     expected_parent_sha256=parent_sha256,
                     transition_reason="session_002_shelter_dilemma",
+                    interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                    model_replacements=(
+                        "Cinder=opencode-paid/gpt-5.6-luna",
+                        "Birch=opencode-paid/gpt-5.6-luna",
+                    ),
+                    replacement_reason="must not be inspected before the parent",
                     max_calls=16,
                     require_complete_budget=True,
                     transport=transport,
@@ -612,6 +747,399 @@ class ModelHostTests(unittest.TestCase):
                     environ={},
                 )
         self.assertEqual(transport.requests, [])
+
+    def test_sequential_continuation_replaces_one_verified_model_and_emits_v6(
+        self,
+    ) -> None:
+        transport = FakeTransport(
+            [
+                responses_response(REST_REPLY, cost="0.001"),
+                response(REST_REPLY, cost="0.001"),
+                response(REST_REPLY, cost="0.001"),
+                responses_response(REST_REPLY, cost="0.001"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, parent_path, parent_sha256, _ = self._paid_v4_parent(
+                directory
+            )
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                ancestor_paths=(root_path,),
+                transition_reason="session_004_sequential_branch",
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                model_replacements=(
+                    "Cinder=opencode-paid/gpt-5.6-luna",
+                ),
+                replacement_reason="replace the adapter that exhausted its budget",
+                max_calls=4,
+                max_completion_tokens=4_096,
+                reasoning_effort="low",
+                max_paid_usd="0.30",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["format_version"], 6)
+        self.assertEqual(
+            artifact["config"]["interaction_protocol"],
+            SEQUENTIAL_DIALOGUE_V3,
+        )
+        self.assertEqual(
+            artifact["assignment_transition_receipts"],
+            [
+                {
+                    "seat_id": "seat-003",
+                    "public_name": "Cinder",
+                    "previous_model": "opencode-paid/kimi-k2.6",
+                    "replacement_model": "opencode-paid/gpt-5.6-luna",
+                    "reason": "replace the adapter that exhausted its budget",
+                }
+            ],
+        )
+        self.assertEqual(
+            artifact["seat_assignments"][2],
+            {
+                "seat_id": "seat-003",
+                "public_name": "Cinder",
+                "model": "opencode-paid/gpt-5.6-luna",
+            },
+        )
+        cinder_call = next(
+            call for call in artifact["calls"] if call["public_name"] == "Cinder"
+        )
+        self.assertEqual(
+            cinder_call["endpoint"],
+            "https://opencode.ai/zen/v1/responses",
+        )
+        cinder_request = cinder_call["request"]
+        self.assertEqual(
+            set(cinder_request),
+            {
+                "model",
+                "input",
+                "max_output_tokens",
+                "reasoning",
+                "text",
+                "stream",
+                "store",
+            },
+        )
+        self.assertEqual(cinder_request["max_output_tokens"], 4_096)
+        self.assertEqual(cinder_request["reasoning"], {"effort": "low"})
+        self.assertTrue(cinder_request["text"]["format"]["strict"])
+        self.assertNotIn("temperature", cinder_request)
+        self.assertEqual(
+            artifact["paid_preflight"]["cost_bound_scope"],
+            "initial_sequential_dialogue_view_per_paid_model",
+        )
+        self.assertEqual(
+            replay_survival(result_from(artifact)).to_dict(), artifact["result"]
+        )
+
+    def test_live_call_rejects_a_provider_model_identity_mismatch(self) -> None:
+        transport = FakeTransport(
+            [response(REST_REPLY)],
+            align_provider_model=False,
+        )
+
+        artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            days=1,
+            max_calls=4,
+            transport=transport,
+        )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["kind"], "provider_model_error")
+        self.assertEqual(len(artifact["calls"]), 1)
+        self.assertEqual(artifact["calls"][0]["status"], "failed")
+        self.assertEqual(artifact["partial_state"]["day"], 0)
+        self.assertFalse(
+            any(
+                event["kind"] == "choice_submitted"
+                for event in artifact["partial_state"]["events"]
+            )
+        )
+
+    def test_sequential_failure_retains_dialogue_without_physical_actions(self) -> None:
+        spoken = "Cinder says this before the later provider failure"
+        cinder_reply = json.dumps(
+            {
+                "action": {"kind": "rest"},
+                "say": {"to": "everyone", "text": spoken},
+            },
+            separators=(",", ":"),
+        )
+        exhausted = json.loads(response(REST_REPLY, cost="0.001").body)
+        exhausted["choices"][0]["finish_reason"] = "length"
+        transport = FakeTransport(
+            [
+                responses_response(cinder_reply, cost="0.001"),
+                response(REST_REPLY, cost="0.001"),
+                TransportResponse(200, {}, json.dumps(exhausted)),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, parent_path, parent_sha256, _ = self._paid_v4_parent(
+                directory
+            )
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                ancestor_paths=(root_path,),
+                transition_reason="session_004_sequential_failure",
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                model_replacements=(
+                    "Cinder=opencode-paid/gpt-5.6-luna",
+                ),
+                replacement_reason="replace the adapter that exhausted its budget",
+                max_calls=4,
+                max_completion_tokens=4_096,
+                reasoning_effort="low",
+                max_paid_usd="0.30",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["status"], "failed")
+        self.assertEqual(artifact["failure"]["public_name"], "Aster")
+        self.assertEqual(
+            artifact["failure"]["kind"], "completion_budget_exhausted"
+        )
+        self.assertEqual(len(transport.requests), 3)
+        self.assertIn(
+            spoken,
+            transport.requests[1]["body"]["messages"][1]["content"],
+        )
+        submitted = [
+            event
+            for event in artifact["partial_state"]["events"]
+            if event["kind"] == "choice_submitted" and event["cycle"] == 3
+        ]
+        self.assertEqual([event["actor"] for event in submitted], ["Cinder", "Lumen"])
+        self.assertTrue(
+            all(
+                event["detail"]["initiative_order"]
+                == ["Cinder", "Lumen", "Aster", "Birch"]
+                for event in submitted
+            )
+        )
+        self.assertTrue(
+            any(
+                event["kind"] == "speech_sent"
+                and event["actor"] == "Cinder"
+                and event["detail"]["message"]["text"] == spoken
+                for event in artifact["partial_state"]["events"]
+            )
+        )
+        self.assertTrue(
+            any(message["text"] == spoken for message in artifact["partial_state"]["messages"])
+        )
+        initial_survivors = {
+            survivor["name"]: survivor
+            for survivor in artifact["initial_state"]["survivors"]
+        }
+        partial_survivors = {
+            survivor["name"]: survivor
+            for survivor in artifact["partial_state"]["survivors"]
+        }
+        for name in initial_survivors:
+            for field in ("energy", "food", "wood", "shelter", "resting", "alive"):
+                self.assertEqual(
+                    partial_survivors[name][field],
+                    initial_survivors[name][field],
+                )
+        self.assertEqual(
+            artifact["partial_state"]["resources"],
+            artifact["initial_state"]["resources"],
+        )
+
+    def test_sequential_replacement_validation_precedes_credentials_and_transport(
+        self,
+    ) -> None:
+        cases = (
+            (
+                (),
+                "reason",
+                "requires a model replacement",
+            ),
+            (
+                (
+                    "Cinder=opencode-paid/gpt-5.6-luna",
+                    "Birch=opencode-paid/gpt-5.6-luna",
+                ),
+                "reason",
+                "at most one model replacement",
+            ),
+            (
+                ("Unknown=opencode-paid/gpt-5.6-luna",),
+                "reason",
+                "unknown identity",
+            ),
+            (
+                ("Cinder=opencode-paid/kimi-k2.6",),
+                "reason",
+                "must change",
+            ),
+            (
+                ("Cinder=opencode-paid/gpt-5.6-luna",),
+                None,
+                "replacement_reason",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, parent_path, parent_sha256, _ = self._paid_v4_parent(
+                directory
+            )
+            for replacements, reason, message in cases:
+                with self.subTest(message=message):
+                    transport = FakeTransport([])
+                    with self.assertRaisesRegex(ValueError, message):
+                        run_live_survival_continuation(
+                            parent_path=parent_path,
+                            expected_parent_sha256=parent_sha256,
+                            ancestor_paths=(root_path,),
+                            transition_reason="session_004_invalid_replacement",
+                            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                            model_replacements=replacements,
+                            replacement_reason=reason,
+                            max_calls=4,
+                            max_completion_tokens=4_096,
+                            reasoning_effort="low",
+                            max_paid_usd="0.30",
+                            transport=transport,
+                            environ={},
+                        )
+                    self.assertEqual(transport.requests, [])
+
+    def test_v6_parent_continues_without_another_model_replacement(self) -> None:
+        transport = FakeTransport(
+            [
+                response(REST_REPLY, cost="0.001"),
+                response(REST_REPLY, cost="0.001"),
+                responses_response(REST_REPLY, cost="0.001"),
+                responses_response(REST_REPLY, cost="0.001"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, v4_path, v6_path, v6_sha256, parent = (
+                self._paid_v6_parent(directory)
+            )
+            artifact = run_live_survival_continuation(
+                parent_path=v6_path,
+                expected_parent_sha256=v6_sha256,
+                ancestor_paths=(root_path, v4_path),
+                transition_reason="session_005_sequential_continuation",
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                max_calls=4,
+                max_completion_tokens=4_096,
+                reasoning_effort="low",
+                max_paid_usd="0.30",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["format_version"], 6)
+        self.assertEqual(artifact["assignment_transition_receipts"], [])
+        self.assertEqual(artifact["seat_assignments"], parent["seat_assignments"])
+        self.assertEqual(
+            [call["public_name"] for call in artifact["calls"]],
+            ["Lumen", "Aster", "Birch", "Cinder"],
+        )
+
+    def test_v6_parent_rejects_transition_tamper_before_credentials_or_transport(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, v4_path, _, _, v6 = self._paid_v6_parent(directory)
+            tampered = deepcopy(v6)
+            tampered["assignment_transition_receipts"][0][
+                "previous_model"
+            ] = "opencode-paid/glm-5.2"
+            tampered_path, tampered_sha256 = self._write_parent(
+                directory,
+                tampered,
+                "tampered-session-004.json",
+            )
+            transport = FakeTransport([])
+            with self.assertRaisesRegex(
+                ValueError,
+                "receipt does not match the verified parent and child",
+            ):
+                run_live_survival_continuation(
+                    parent_path=tampered_path,
+                    expected_parent_sha256=tampered_sha256,
+                    ancestor_paths=(root_path, v4_path),
+                    transition_reason="session_005_tamper_check",
+                    interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                    max_calls=4,
+                    max_completion_tokens=4_096,
+                    reasoning_effort="low",
+                    max_paid_usd="0.30",
+                    transport=transport,
+                    environ={},
+                )
+            self.assertEqual(transport.requests, [])
+
+    def test_v6_parent_rejects_implicit_global_protocol_downgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, v4_path, v6_path, v6_sha256, _ = (
+                self._paid_v6_parent(directory)
+            )
+            transport = FakeTransport([])
+            with self.assertRaisesRegex(
+                ValueError,
+                "format-v6 parent must continue",
+            ):
+                run_live_survival_continuation(
+                    parent_path=v6_path,
+                    expected_parent_sha256=v6_sha256,
+                    ancestor_paths=(root_path, v4_path),
+                    transition_reason="session_005_downgrade_check",
+                    max_calls=4,
+                    max_completion_tokens=4_096,
+                    reasoning_effort="low",
+                    max_paid_usd="0.30",
+                    transport=transport,
+                    environ={},
+                )
+            self.assertEqual(transport.requests, [])
+
+    def test_v6_parent_rejects_call_view_tamper_before_credentials_or_transport(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, v4_path, _, _, v6 = self._paid_v6_parent(directory)
+            tampered = deepcopy(v6)
+            tampered["calls"][0]["request"]["max_output_tokens"] = 4_095
+            tampered_path, tampered_sha256 = self._write_parent(
+                directory,
+                tampered,
+                "tampered-call-session-004.json",
+            )
+            transport = FakeTransport([])
+            with self.assertRaisesRegex(
+                ValueError,
+                "request does not match its replay view",
+            ):
+                run_live_survival_continuation(
+                    parent_path=tampered_path,
+                    expected_parent_sha256=tampered_sha256,
+                    ancestor_paths=(root_path, v4_path),
+                    transition_reason="session_005_call_tamper_check",
+                    interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                    max_calls=4,
+                    max_completion_tokens=4_096,
+                    reasoning_effort="low",
+                    max_paid_usd="0.30",
+                    transport=transport,
+                    environ={},
+                )
+            self.assertEqual(transport.requests, [])
 
     def test_live_continuation_extends_v4_parent_as_format_v5(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1263,7 +1791,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.11.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.0")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -1618,7 +2146,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.11.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

@@ -20,6 +20,8 @@ we keep one continuous campaign instead of rebuilding the world for every episod
 - **session 2:** Birch and Aster stated a valid shelter plan, but nobody transferred the wood needed to execute it.
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 
+v0.12.0 does not include or claim a live session 4. it releases and verifies the next interaction protocol before that protocol touches the paid campaign.
+
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
 one campaign is not a general result. it cannot tell us whether a model is peaceful, selfish, deceptive, or cooperative by nature. it gives us a path we can inspect without pretending the transcript proves more than it does.
@@ -28,7 +30,11 @@ one campaign is not a general result. it cannot tell us whether a model is peace
 
 each survivor has a public name such as Aster, Birch, Cinder, or Lumen. the models only see those names. the host keeps the provider mapping out of their prompts and private views.
 
-the current released protocol divides one day into four shared decision beats. every awake survivor receives a private view, then returns one action and optional speech in the same response. the engine resolves the complete beat only after every awake survivor answers.
+the current campaign continuation protocol, `sequential-dialogue-v3`, divides one day into four shared decision beats. initiative rotates each beat. awake survivors answer one at a time, so a later survivor can hear valid speech sent earlier in that same beat.
+
+speech is the only thing that becomes visible immediately. submitted physical actions stay sealed until every awake survivor has answered. the engine then resolves the complete action set atomically, using the same physical rules as `global-beats-v2`. nobody gets to inspect an earlier action and counter it just because their model call ran later.
+
+fresh `survive` and `survive-live` runs still use `global-beats-v2`. `continue-live` also defaults to v2 for historical compatibility. a continuation enters v3 only when it explicitly passes `--interaction-protocol sequential-dialogue-v3`.
 
 that creates a small but real set of choices:
 
@@ -36,7 +42,7 @@ that creates a small but real set of choices:
 - eat now, or keep food as insurance
 - gather wood for a shelter, or forage for immediate survival
 - share a scarce resource, or keep it
-- talk, stay awake, and react on a later beat
+- talk now, and decide whether to trust or answer someone in the same beat
 - rest before the deadline, or risk exhaustion
 
 | action | energy | effect |
@@ -50,11 +56,13 @@ that creates a small but real set of choices:
 | `give_food` | 1 | transfer 1–2 owned food to a living peer |
 | `give_wood` | 1 | transfer 1–2 owned wood to a living peer |
 
-speech is free and capped at 500 characters. `wait` keeps a survivor awake. `rest` ends its day. on beat four, anything except `rest` is cancelled before exhaustion costs 3 energy and forces rest.
+speech is free and capped at 500 characters. `wait` keeps a survivor awake. `rest` ends its day. on beat four, valid speech stays in the trace, but every physical action except `rest` is cancelled before exhaustion costs 3 energy and forces rest.
 
 energy at or below 0 is permanent death. normal living cost is charged after everyone rests or collapses. the land then regrows a small amount of food and wood.
 
-the current shared-beat design is intentionally strict: same-beat choices use frozen views, and speech arrives on the recipient’s next active beat. that prevents API call order from quietly becoming game order. it also limits how quickly models can react, which is now visible as an experimental tradeoff rather than hidden machinery.
+the asymmetry is deliberate: dialogue is sequential, but the world is atomic. models can react to words without learning whether a promise, gift, meal, or shelter action was actually submitted. those facts only arrive through the resolved world state.
+
+if a provider fails before every survivor has answered, the partial beat keeps its valid speech and submitted choices as evidence. it applies no energy cost, transfer, gathering, meal, shelter, rest, exhaustion, or other physical mutation. the world does not reward whichever calls happened to finish before the failure.
 
 ## what counts as evidence
 
@@ -97,14 +105,17 @@ before paying models, we run simple scripted policies through the same ecology. 
 ```powershell
 py -3.11 tools\calibrate_survival.py `
   --preset lean-camp-v1 `
+  --interaction-protocol sequential-dialogue-v3 `
   --seed-start 20000 --seed-count 256 `
   --cycles 8 --bootstrap-samples 10000 `
-  --output outputs\v0.10.0-global-beats-v2-confirmation.json
+  --output outputs\v0.12.0-sequential-dialogue-v3-confirmation.json
 ```
 
-the retained `global-beats-v2` confirmation ran 5,120 simulations over 256 held-out seeds and passed all 21 fixed balance gates. inaction always ended in extinction. ordinary food-first behavior averaged `3.089844` survivors out of four; the visible mutual-aid rule averaged `3.311523`.
+the retained `sequential-dialogue-v3` confirmation ran 5,120 simulations over 256 held-out seeds and passed all 21 fixed balance gates. inaction always ended in extinction. ordinary food-first behavior averaged `3.089844` survivors out of four; the visible mutual-aid rule averaged `3.311523`.
 
-those are balance results, not live-model results. see the [calibration proof](outputs/v0.10.0-global-beats-v2-proof.md) and [retained artifact](outputs/v0.10.0-global-beats-v2-confirmation.json).
+every retained aggregate physical metric and per-seed physical comparison matches `global-beats-v2` exactly. a focused engine test also holds submitted choices fixed across three seeds and all four seat rotations, then compares physical state and objective events. one communication metric changed by design: the chatty food-first policy sent `31.488281` messages per run instead of `31.246094`. valid final-beat speech now remains visible even when its physical action is cancelled.
+
+those are balance results, not live-model results. see the [calibration proof](outputs/v0.12.0-sequential-dialogue-v3-proof.md) and [retained artifact](outputs/v0.12.0-sequential-dialogue-v3-confirmation.json).
 
 ## test the model wire for free
 
@@ -135,7 +146,11 @@ free Zen model availability can change. check the [current OpenCode list](https:
 
 `continue-live` does not recreate earlier days. it verifies the supplied artifact chain, restores the exact private state, preserves the public identities, and applies one logged between-session transition.
 
-a format-v5 continuation takes its direct parent through `--parent`. earlier artifacts use repeatable `--ancestor` flags in oldest-to-newest order. each child stores only its direct parent link.
+`continue-live` defaults to the historical v2 contract and emits format v4 or v5 as its lineage requires. an explicitly selected `--interaction-protocol sequential-dialogue-v3` continuation emits format v6. continuations take their direct parent through `--parent`; earlier artifacts use repeatable `--ancestor` flags in oldest-to-newest order. each child stores only its direct parent link.
+
+v6 can replace at most one hidden model assignment with `--replace-model PUBLIC_NAME=PROVIDER/MODEL`. a replacement also requires `--replacement-reason`. the public name does not change, and the artifact stores one exact before-and-after assignment receipt. a continuation without a replacement stores no assignment churn.
+
+for every completed call, v6 binds the provider request, private view, parsed choice, and resulting world state. a failed partial beat binds the speech and choices already submitted while proving that no physical action resolved. the verifier rejects changes to call order, speech visibility, requests, views, choices, state, or assignment receipts.
 
 verify the complete session-1 → session-2 → session-3 chain without provider calls:
 
@@ -147,7 +162,7 @@ py -3.11 tools\verify_live_artifact.py `
   --artifact-sha256 ca283bd336fd58c1cb0e461e14e8394299cf3a06c7f44654f412ecf408756b27
 ```
 
-session 3 failed before its first beat resolved, so the verifier checks its exact partial state and failed-call receipt instead of inventing a completed result.
+session 3 is a historical format-v5 artifact. it failed before its first beat resolved, so the verifier checks its exact partial state and failed-call receipt instead of inventing a completed result.
 
 ## the model contract
 

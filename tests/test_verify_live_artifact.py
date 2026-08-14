@@ -5,8 +5,9 @@ import importlib.util
 import json
 import tempfile
 import unittest
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -28,22 +29,37 @@ SESSION_2_ARTIFACT_SHA256 = (
 SESSION_2_CANONICAL_SHA256 = (
     "ed1f299bbc698951e77256b46291ea4ee142469bc0a7cd0e7b6bf476820392ca"
 )
+SESSION_3_ARTIFACT = (
+    REPOSITORY_ROOT
+    / "outputs"
+    / "v0.11.0-session-003-global-beats-shelter-dilemma-29993.json"
+)
+SESSION_3_ARTIFACT_SHA256 = (
+    "ca283bd336fd58c1cb0e461e14e8394299cf3a06c7f44654f412ecf408756b27"
+)
 SPEC = importlib.util.spec_from_file_location("verify_live_artifact", VERIFIER_PATH)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError("cannot load live artifact verifier")
 VERIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFIER)
 
-from world_sim.survival.demo import result_sha256
-from world_sim.survival.engine import (
+from world_sim.survival.demo import result_sha256  # noqa: E402
+from world_sim.model_host import (  # noqa: E402
+    ChatTransport,
+    EndpointSpec,
+    TransportResponse,
+    run_live_survival_continuation,
+)
+from world_sim.survival.engine import (  # noqa: E402
     adjust_shared_resource,
     continue_survival_world,
     make_survival_world,
     replay_survival,
     run_survival,
 )
-from world_sim.survival.models import (
+from world_sim.survival.models import (  # noqa: E402
     GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
     SLOTS_V1,
     SurvivalConfig,
     SurvivorView,
@@ -65,6 +81,90 @@ class _FailingSpeaker:
     def decide(self, view: SurvivorView) -> Mapping[str, object]:
         del view
         raise RuntimeError("synthetic provider failure")
+
+
+class _HostFixtureTransport(ChatTransport):
+    def __init__(
+        self,
+        *,
+        fail_at: int | None = None,
+        action_kind: str = "rest",
+    ) -> None:
+        self.fail_at = fail_at
+        self.action_kind = action_kind
+        self.call_count = 0
+
+    def post(
+        self,
+        endpoint: EndpointSpec,
+        request_body: Mapping[str, object],
+        *,
+        api_key: str | None,
+        timeout_seconds: float,
+    ) -> TransportResponse:
+        del api_key, timeout_seconds
+        self.call_count += 1
+        if self.call_count == self.fail_at:
+            return TransportResponse(
+                status=503,
+                headers={"x-request-id": f"failed-{self.call_count}"},
+                body='{"error":{"message":"synthetic provider failure"}}',
+            )
+        content = json.dumps(
+            {
+                "action": {"kind": self.action_kind},
+                "say": {
+                    "to": "everyone",
+                    "text": f"host fixture call {self.call_count}",
+                },
+            },
+            separators=(",", ":"),
+        )
+        if endpoint.api_style == "responses":
+            payload: dict[str, object] = {
+                "object": "response",
+                "model": request_body["model"],
+                "status": "completed",
+                "error": None,
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": content}],
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "total_tokens": 120,
+                    "output_tokens_details": {"reasoning_tokens": 10},
+                },
+                "incomplete_details": None,
+                "cost": "0.0001",
+            }
+        else:
+            payload = {
+                "model": request_body["model"],
+                "choices": [
+                    {
+                        "message": {"content": content},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "total_tokens": 120,
+                    "completion_tokens_details": {"reasoning_tokens": 10},
+                },
+                "cost": "0.0001",
+            }
+        return TransportResponse(
+            status=200,
+            headers={"x-request-id": f"request-{self.call_count}"},
+            body=json.dumps(payload),
+        )
 
 
 def _source_receipt() -> dict[str, str]:
@@ -264,6 +364,65 @@ def _next_continuation_artifact(
     return child_path, artifact, boundary_state
 
 
+def _host_v6_artifact(
+    *,
+    transport: ChatTransport,
+    parent_path: Path = SESSION_2_ARTIFACT,
+    expected_parent_sha256: str = SESSION_2_ARTIFACT_SHA256,
+    ancestor_paths: Sequence[Path] = (SESSION_1_ARTIFACT,),
+    model_replacements: Sequence[str] = (
+        "Cinder=opencode-paid/gpt-5.6-luna",
+    ),
+) -> dict[str, object]:
+    return run_live_survival_continuation(
+        parent_path=parent_path,
+        expected_parent_sha256=expected_parent_sha256,
+        ancestor_paths=ancestor_paths,
+        additional_cycles=1,
+        shared_resource="wood",
+        shared_stock=0,
+        transition_reason="synthetic_host_v6",
+        interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        model_replacements=model_replacements,
+        replacement_reason=(
+            "replace Kimi for the bounded sequential retest"
+            if model_replacements
+            else None
+        ),
+        max_calls=4,
+        max_completion_tokens=4096,
+        temperature=0.2,
+        reasoning_effort="low",
+        max_paid_usd="1.20",
+        timeout_seconds=30,
+        transport=transport,
+        environ={"OPENCODE_ZEN_API_KEY": "fixture-key"},
+    )
+
+
+@lru_cache(maxsize=2)
+def _retained_host_v6_json(fail_at: int | None) -> str:
+    artifact = _host_v6_artifact(
+        transport=_HostFixtureTransport(fail_at=fail_at)
+    )
+    return json.dumps(
+        artifact,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _retained_host_v6_artifact(fail_at: int | None = None) -> dict[str, object]:
+    return json.loads(_retained_host_v6_json(fail_at))
+
+
+def _tamper_first_call_request(artifact: dict[str, object]) -> None:
+    request = artifact["calls"][0]["request"]
+    prompt_key = "input" if "input" in request else "messages"
+    request[prompt_key][1]["content"] = "tampered view"
+
+
 class LiveArtifactVerifierTests(unittest.TestCase):
     def test_verifier_rejects_ambiguous_json_before_schema_validation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -328,6 +487,24 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         self.assertEqual(child_receipt["continuation_depth"], 1)
         self.assertEqual(
             child_receipt["root_artifact_sha256"],
+            SESSION_1_ARTIFACT_SHA256,
+        )
+
+    def test_retained_session_three_failure_chain_remains_exact(self) -> None:
+        receipt = VERIFIER.verify_live_artifact(
+            SESSION_3_ARTIFACT,
+            expected_artifact_sha256=SESSION_3_ARTIFACT_SHA256,
+            parent_path=SESSION_2_ARTIFACT,
+            ancestor_paths=(SESSION_1_ARTIFACT,),
+        )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["failure_kind"], "completion_budget_exhausted")
+        self.assertTrue(receipt["failure_call_receipt_consistent"])
+        self.assertTrue(receipt["continuation_chain_verified"])
+        self.assertEqual(receipt["continuation_depth"], 2)
+        self.assertEqual(
+            receipt["root_artifact_sha256"],
             SESSION_1_ARTIFACT_SHA256,
         )
 
@@ -531,6 +708,374 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                     v5,
                     parent_path=v4,
                     ancestor_paths=(v3,),
+                )
+
+    def test_host_emitted_completed_v6_binds_every_call_to_its_result(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "host-completed-v6.json"
+            artifact = _retained_host_v6_artifact()
+            self.assertEqual(artifact["status"], "completed")
+            self.assertEqual(artifact["format_version"], 6)
+            _write_artifact(child, artifact)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child,
+                parent_path=SESSION_2_ARTIFACT,
+                ancestor_paths=(SESSION_1_ARTIFACT,),
+            )
+            self.assertTrue(receipt["exact_replay"])
+            self.assertTrue(receipt["continuation_chain_verified"])
+
+            mutations = {
+                "order": lambda payload: payload["calls"][0].__setitem__(
+                    "public_name", "Birch"
+                ),
+                "request": _tamper_first_call_request,
+                "provider_model": lambda payload: payload["calls"][0][
+                    "response"
+                ].__setitem__("provider_model", "wrong-model"),
+                "raw_reply": lambda payload: payload["calls"][0][
+                    "response"
+                ].__setitem__(
+                    "model_reply",
+                    '{"action":{"kind":"wait"},"say":null}',
+                ),
+                "validation": lambda payload: payload["calls"][0][
+                    "validation"
+                ].__setitem__("action_error", "invented validation error"),
+                "cost_authorization": lambda payload: payload["calls"][0][
+                    "cost_authorization"
+                ].__setitem__("request_cost_bound_usd", "999"),
+                "parsed_choice": lambda payload: payload["calls"][0][
+                    "parsed_choice"
+                ]["action"].__setitem__("kind", "wait"),
+                "extra": lambda payload: payload["calls"].append(
+                    deepcopy(payload["calls"][-1])
+                ),
+                "missing": lambda payload: payload["calls"].pop(),
+            }
+            for label, mutate in mutations.items():
+                with self.subTest(tamper=label):
+                    tampered = deepcopy(artifact)
+                    mutate(tampered)
+                    _write_artifact(child, tampered)
+                    with self.assertRaises(ValueError):
+                        VERIFIER.verify_live_artifact(
+                            child,
+                            parent_path=SESSION_2_ARTIFACT,
+                            ancestor_paths=(SESSION_1_ARTIFACT,),
+                        )
+
+    def test_host_emitted_failed_v6_replays_its_committed_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "host-failed-v6.json"
+            artifact = _retained_host_v6_artifact(2)
+            self.assertEqual(artifact["status"], "failed")
+            self.assertEqual(len(artifact["calls"]), 2)
+            _write_artifact(child, artifact)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child,
+                parent_path=SESSION_2_ARTIFACT,
+                ancestor_paths=(SESSION_1_ARTIFACT,),
+            )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(receipt["failure_kind"], "http_error")
+        self.assertTrue(receipt["failure_call_receipt_consistent"])
+        self.assertTrue(receipt["continuation_chain_verified"])
+        current_events = [
+            event
+            for event in artifact["partial_state"]["events"]
+            if event["cycle"] == artifact["failure"]["cycle"]
+            and event["slot"] == artifact["failure"]["slot"]
+        ]
+        event_kinds = {event["kind"] for event in current_events}
+        self.assertIn("choice_submitted", event_kinds)
+        self.assertIn("choice_recorded", event_kinds)
+        self.assertIn("speech_sent", event_kinds)
+        self.assertTrue(
+            {
+                "choice_energy_paid",
+                "wait_completed",
+                "food_foraged",
+                "wood_gathered",
+                "resource_given",
+                "food_eaten",
+                "shelter_built",
+                "rest_started",
+                "action_resolution_rejected",
+                "cycle_energy_paid",
+                "deadline_choice_cancelled",
+                "forced_collapse",
+                "survivor_died",
+                "resources_regenerated",
+                "world_finished",
+            }.isdisjoint(event_kinds)
+        )
+        initial_survivors = {
+            survivor["name"]: survivor
+            for survivor in artifact["initial_state"]["survivors"]
+        }
+        for survivor in artifact["partial_state"]["survivors"]:
+            initial = initial_survivors[survivor["name"]]
+            for key in ("energy", "food", "wood", "shelter", "resting"):
+                self.assertEqual(survivor[key], initial[key])
+        self.assertEqual(
+            artifact["partial_state"]["resources"],
+            artifact["initial_state"]["resources"],
+        )
+        first_speech = artifact["calls"][0]["parsed_choice"]["say"]["text"]
+        second_request = artifact["calls"][1]["request"]
+        prompt_key = "input" if "input" in second_request else "messages"
+        self.assertIn(first_speech, second_request[prompt_key][1]["content"])
+
+    def test_host_emitted_v6_call_cap_failure_proves_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "host-call-cap-v6.json"
+            artifact = _host_v6_artifact(
+                transport=_HostFixtureTransport(action_kind="wait")
+            )
+            self.assertEqual(artifact["status"], "failed")
+            self.assertEqual(artifact["failure"]["kind"], "call_cap_reached")
+            self.assertEqual(len(artifact["calls"]), artifact["config"]["max_calls"])
+            _write_artifact(child, artifact)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child,
+                parent_path=SESSION_2_ARTIFACT,
+                ancestor_paths=(SESSION_1_ARTIFACT,),
+            )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertTrue(receipt["failure_call_receipt_consistent"])
+
+    def test_v6_rejects_invented_no_call_failure_preconditions(self) -> None:
+        base = _retained_host_v6_artifact(2)
+        failed_call = deepcopy(base["calls"][-1])
+        mutations = {
+            "early_call_cap": {
+                "kind": "call_cap_reached",
+                "message": "live model call cap reached before request",
+            },
+            "budget_within_limit": {
+                "kind": "paid_budget_exhausted",
+                "message": "paid cost authorization exhausted before request",
+                "cost_authorization": failed_call["cost_authorization"],
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "forged-no-call-v6.json"
+            for label, replacement in mutations.items():
+                with self.subTest(tamper=label):
+                    artifact = deepcopy(base)
+                    artifact["calls"].pop()
+                    artifact["failure"].update(
+                        {
+                            "call_sequence": None,
+                            "http_status": None,
+                            **replacement,
+                        }
+                    )
+                    _write_artifact(child, artifact)
+                    with self.assertRaises(ValueError):
+                        VERIFIER.verify_live_artifact(
+                            child,
+                            parent_path=SESSION_2_ARTIFACT,
+                            ancestor_paths=(SESSION_1_ARTIFACT,),
+                        )
+
+    def test_host_emitted_v6_continues_without_forced_model_churn(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_path = root / "first-v6.json"
+            first = _retained_host_v6_artifact()
+            first_sha256 = _write_artifact(first_path, first)
+
+            second_path = root / "second-v6.json"
+            second = _host_v6_artifact(
+                transport=_HostFixtureTransport(),
+                parent_path=first_path,
+                expected_parent_sha256=first_sha256,
+                ancestor_paths=(SESSION_1_ARTIFACT, SESSION_2_ARTIFACT),
+                model_replacements=(),
+            )
+            _write_artifact(second_path, second)
+
+            receipt = VERIFIER.verify_live_artifact(
+                second_path,
+                parent_path=first_path,
+                ancestor_paths=(SESSION_1_ARTIFACT, SESSION_2_ARTIFACT),
+            )
+
+        self.assertEqual(second["format_version"], 6)
+        self.assertEqual(second["assignment_transition_receipts"], [])
+        self.assertTrue(receipt["exact_replay"])
+        self.assertEqual(receipt["continuation_depth"], 3)
+
+    def test_failed_dialogue_v6_rejects_order_speech_choice_view_and_state_tampering(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / "host-failed-v6.json"
+            artifact = _retained_host_v6_artifact(2)
+            mutations = {
+                "order": lambda payload: payload["calls"][0].__setitem__(
+                    "public_name", "Aster"
+                ),
+                "speech": lambda payload: payload["calls"][0][
+                    "parsed_choice"
+                ]["say"].__setitem__("text", "tampered speech"),
+                "raw_reply": lambda payload: payload["calls"][0][
+                    "response"
+                ].__setitem__(
+                    "model_reply",
+                    '{"action":{"kind":"wait"},"say":null}',
+                ),
+                "validation": lambda payload: payload["calls"][0][
+                    "validation"
+                ].__setitem__("speech_error", "invented validation error"),
+                "cost_authorization": lambda payload: payload["calls"][0][
+                    "cost_authorization"
+                ].__setitem__("cumulative_cost_bound_usd", "999"),
+                "choice": lambda payload: payload["calls"][0][
+                    "parsed_choice"
+                ]["action"].__setitem__("kind", "wait"),
+                "view": _tamper_first_call_request,
+                "state": lambda payload: payload["partial_state"]["survivors"][
+                    0
+                ].__setitem__(
+                    "energy",
+                    payload["partial_state"]["survivors"][0]["energy"] + 1,
+                ),
+            }
+            for label, mutate in mutations.items():
+                with self.subTest(tamper=label):
+                    tampered = deepcopy(artifact)
+                    mutate(tampered)
+                    _write_artifact(child, tampered)
+                    with self.assertRaises(ValueError):
+                        VERIFIER.verify_live_artifact(
+                            child,
+                            parent_path=SESSION_2_ARTIFACT,
+                            ancestor_paths=(SESSION_1_ARTIFACT,),
+                        )
+
+    def test_failed_v6_rejects_boolean_aliases_for_numeric_state(self) -> None:
+        artifact = _retained_host_v6_artifact(2)
+        mutations = {
+            "config": lambda payload: payload["config"]["world_config"].__setitem__(
+                "eat_energy_cost", True
+            ),
+            "initial": lambda payload: payload["initial_state"]["survivors"][
+                2
+            ].__setitem__("food", True),
+            "partial": lambda payload: payload["partial_state"].__setitem__(
+                "slot", True
+            ),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "boolean-alias-v6.json"
+            for label, mutate in mutations.items():
+                with self.subTest(tamper=label):
+                    tampered = deepcopy(artifact)
+                    mutate(tampered)
+                    _write_artifact(child, tampered)
+                    with self.assertRaises(ValueError):
+                        VERIFIER.verify_live_artifact(
+                            child,
+                            parent_path=SESSION_2_ARTIFACT,
+                            ancestor_paths=(SESSION_1_ARTIFACT,),
+                        )
+
+    def test_v6_requires_exact_assignment_transition_receipts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / "host-failed-v6.json"
+            artifact = _retained_host_v6_artifact(2)
+
+            mutations = {
+                "absent": lambda payload: payload.pop(
+                    "assignment_transition_receipts"
+                ),
+                "empty": lambda payload: payload.__setitem__(
+                    "assignment_transition_receipts", []
+                ),
+                "fake": lambda payload: payload["seat_assignments"][2].__setitem__(
+                    "model", "opencode-paid/kimi-k2.6"
+                ),
+                "unknown": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("public_name", "Ghost"),
+                "duplicate": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ].append(deepcopy(payload["assignment_transition_receipts"][0])),
+                "duplicate_child_seat": lambda payload: payload[
+                    "seat_assignments"
+                ].append(deepcopy(payload["seat_assignments"][2])),
+                "wrong_seat": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("seat_id", "seat-001"),
+                "previous": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("previous_model", "test/wrong-before"),
+                "replacement": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("replacement_model", "test/wrong-after"),
+                "unexplained": lambda payload: payload["seat_assignments"][
+                    0
+                ].__setitem__("model", "test/unexplained"),
+                "extra_field": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("extra", "not allowed"),
+                "invalid_reason": lambda payload: payload[
+                    "assignment_transition_receipts"
+                ][0].__setitem__("reason", " padded "),
+            }
+            for label, mutate in mutations.items():
+                with self.subTest(tamper=label):
+                    tampered = deepcopy(artifact)
+                    mutate(tampered)
+                    _write_artifact(child, tampered)
+                    with self.assertRaises(ValueError):
+                        VERIFIER.verify_live_artifact(
+                            child,
+                            parent_path=SESSION_2_ARTIFACT,
+                            ancestor_paths=(SESSION_1_ARTIFACT,),
+                        )
+
+    def test_v6_rejects_sequential_protocol_or_receipts_on_legacy_format(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / "host-failed-v6.json"
+            artifact = _retained_host_v6_artifact(2)
+
+            wrong_protocol = deepcopy(artifact)
+            wrong_protocol["config"]["interaction_protocol"] = GLOBAL_BEATS_V2
+            _write_artifact(child, wrong_protocol)
+            with self.assertRaisesRegex(ValueError, "sequential-dialogue-v3"):
+                VERIFIER.verify_live_artifact(
+                    child,
+                    parent_path=SESSION_2_ARTIFACT,
+                    ancestor_paths=(SESSION_1_ARTIFACT,),
+                )
+
+            legacy = deepcopy(artifact)
+            legacy["format_version"] = 5
+            _write_artifact(child, legacy)
+            with self.assertRaisesRegex(
+                ValueError,
+                "assignment_transition_receipts requires format_version 6",
+            ):
+                VERIFIER.verify_live_artifact(
+                    child,
+                    parent_path=SESSION_2_ARTIFACT,
+                    ancestor_paths=(SESSION_1_ARTIFACT,),
                 )
 
     def test_continuation_requires_an_actual_parent(self) -> None:

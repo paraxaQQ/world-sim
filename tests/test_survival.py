@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import unittest
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
@@ -20,9 +22,11 @@ from world_sim.survival.engine import (
 )
 from world_sim.survival.models import (
     GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
     SLOTS_V1,
     SurvivalConfig,
     SurvivalEvent,
+    SurvivalResult,
     SurvivalWorld,
     SurvivorView,
 )
@@ -80,6 +84,37 @@ def events(
 
 
 class SurvivalEngineTests(unittest.TestCase):
+    def test_legacy_protocol_results_remain_byte_stable(self) -> None:
+        expected = {
+            SLOTS_V1: "e89c8a44ae551bd555cfa990abbed669d5746d6b01cdcb53dc4c4eae3085187e",
+            GLOBAL_BEATS_V2: "5f0e7ab7c7ccf960a865c118d947f7516feeb6df70fffbbd85aea46137bb3d7e",
+        }
+        for interaction_protocol, expected_sha256 in expected.items():
+            with self.subTest(interaction_protocol=interaction_protocol):
+                world = make_survival_world(
+                    ("Aster", "Birch"),
+                    seed=31,
+                    config=SurvivalConfig(max_days=1),
+                    interaction_protocol=interaction_protocol,
+                )
+                result = run_survival(
+                    world,
+                    {
+                        "Aster": ScriptedPolicy(
+                            (choice({"kind": "forage"}), rest())
+                        ),
+                        "Birch": ScriptedPolicy(
+                            (choice({"kind": "gather_wood"}), rest())
+                        ),
+                    },
+                    days=1,
+                )
+
+                digest = hashlib.sha256(
+                    canonical_result_json(result).encode("utf-8")
+                ).hexdigest()
+                self.assertEqual(digest, expected_sha256)
+
     def test_rest_and_speech_costs_are_fixed_at_zero(self) -> None:
         with self.assertRaisesRegex(ValueError, "rest_energy_cost must be 0"):
             SurvivalConfig(rest_energy_cost=1)
@@ -124,6 +159,42 @@ class SurvivalEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "view hash mismatch"):
             replay_survival(tampered)
 
+    def test_replay_rejects_json_numeric_type_aliases(self) -> None:
+        original = run_survival_demo(seed=29, days=1)
+        for seed in (29.0, "29"):
+            with self.subTest(initial_seed=seed):
+                initial_state = dict(original.initial_state)
+                initial_state["seed"] = seed
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "initial state does not match its reconstructed JSON types",
+                ):
+                    replay_survival(
+                        replace(original, initial_state=initial_state)
+                    )
+
+        for field, convert in (("energy", float), ("alive", int)):
+            with self.subTest(field=field):
+                final_state = dict(original.final_state)
+                survivors = [
+                    dict(survivor) for survivor in final_state["survivors"]
+                ]
+                survivors[0][field] = convert(survivors[0][field])
+                final_state["survivors"] = survivors
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "choice tape replay does not match",
+                ):
+                    replay_survival(replace(original, final_state=final_state))
+
+        events = [dict(event) for event in original.events]
+        events[0]["sequence"] = float(events[0]["sequence"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "choice tape replay does not match",
+        ):
+            replay_survival(replace(original, events=tuple(events)))
+
     def test_replay_rejects_disagreeing_day_and_cycle_aliases(self) -> None:
         original = run_survival_demo(seed=29, days=1)
         tape = [dict(record) for record in original.choice_tape]
@@ -131,6 +202,19 @@ class SurvivalEngineTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "aliases disagree"):
             replay_survival(replace(original, choice_tape=tuple(tape)))
+
+        for cycle in (True, 1.0, "1"):
+            with self.subTest(cycle=cycle):
+                tape = [dict(record) for record in original.choice_tape]
+                tape[0]["day"] = cycle
+                tape[0]["cycle"] = cycle
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "choice tape day must be an integer",
+                ):
+                    replay_survival(
+                        replace(original, choice_tape=tuple(tape))
+                    )
 
     def test_replay_rejects_disagreeing_snapshot_aliases(self) -> None:
         world = make_survival_world(
@@ -291,6 +375,577 @@ class SurvivalEngineTests(unittest.TestCase):
         run_survival_cycle(second, second_slots)
 
         self.assertEqual(first.to_dict(), second.to_dict())
+
+    def test_sequential_dialogue_exposes_speech_but_seals_physical_changes(
+        self,
+    ) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        aster = ScriptedPolicy(
+            (
+                choice(
+                    {"kind": "forage"},
+                    {"to": "Birch", "text": "food moved"},
+                ),
+                rest(),
+            )
+        )
+        birch = ScriptedPolicy((rest(),))
+
+        result = run_survival(
+            world,
+            {"Aster": aster, "Birch": birch},
+            days=1,
+        )
+
+        birch_view = birch.views[0]
+        self.assertEqual(birch_view.resources["food"], 16)
+        self.assertEqual(birch_view.others[0]["energy"], 16)
+        self.assertEqual(
+            [message["text"] for message in birch_view.inbox],
+            ["food moved"],
+        )
+        self.assertNotIn("food", birch_view.others[0])
+        self.assertFalse(
+            any(
+                event["kind"] == "food_foraged"
+                and event["actor"] == "Aster"
+                for event in birch_view.recent_events
+            )
+        )
+        self.assertEqual(len(events(world, "food_foraged", actor="Aster")), 1)
+        self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+
+    def test_sequential_dialogue_supports_a_same_beat_reply(self) -> None:
+        class ReplyPolicy:
+            def __init__(self) -> None:
+                self.views: list[SurvivorView] = []
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                self.views.append(view)
+                if len(self.views) == 1:
+                    if [message["text"] for message in view.inbox] != ["ping"]:
+                        raise AssertionError("Birch did not hear the same-beat ping")
+                    return wait({"to": "Aster", "text": "pong"})
+                return rest()
+
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        aster = ScriptedPolicy(
+            (wait({"to": "Birch", "text": "ping"}), rest())
+        )
+        birch = ReplyPolicy()
+
+        result = run_survival(
+            world,
+            {"Aster": aster, "Birch": birch},
+            days=1,
+        )
+
+        self.assertEqual(
+            [message["text"] for message in birch.views[0].inbox],
+            ["ping"],
+        )
+        self.assertEqual(
+            [message["text"] for message in aster.views[1].inbox],
+            ["pong"],
+        )
+        first_beat_messages = [
+            message.text for message in world.messages if message.slot == 1
+        ]
+        self.assertEqual(first_beat_messages, ["ping", "pong"])
+        self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+
+    def test_sequential_dialogue_can_trust_a_gift_before_atomic_build(self) -> None:
+        class TrustingBuilder:
+            def __init__(self) -> None:
+                self.views: list[SurvivorView] = []
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                self.views.append(view)
+                if len(self.views) == 1:
+                    heard = [message["text"] for message in view.inbox]
+                    if heard != ["sending two wood"]:
+                        raise AssertionError("Birch did not hear the gift claim")
+                    return choice({"kind": "build_shelter"})
+                return rest()
+
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        world.survivors["Aster"].wood = 2
+        world.survivors["Birch"].wood = 2
+        aster = ScriptedPolicy(
+            (
+                choice(
+                    {
+                        "kind": "give_wood",
+                        "target": "Birch",
+                        "amount": 2,
+                    },
+                    {"to": "Birch", "text": "sending two wood"},
+                ),
+                rest(),
+            )
+        )
+        birch = TrustingBuilder()
+
+        run_survival(
+            world,
+            {"Aster": aster, "Birch": birch},
+            days=1,
+        )
+
+        self.assertEqual(birch.views[0].self_state["wood"], 2)
+        self.assertTrue(world.survivors["Birch"].shelter)
+        self.assertEqual(world.survivors["Aster"].wood, 0)
+        self.assertEqual(world.survivors["Birch"].wood, 0)
+        gift = events(world, "resource_given", actor="Aster")[0]
+        build = events(world, "shelter_built", actor="Birch")[0]
+        self.assertLess(gift.sequence, build.sequence)
+
+    def test_silent_dialogue_matches_global_physics_across_seeds_and_seats(
+        self,
+    ) -> None:
+        names = ("Aster", "Birch", "Cinder", "Lumen")
+        rotations = tuple(
+            names[offset:] + names[:offset] for offset in range(len(names))
+        )
+        scripts = {
+            "Aster": (
+                choice({"kind": "gather_wood"}),
+                choice(
+                    {
+                        "kind": "give_wood",
+                        "target": "Birch",
+                        "amount": 2,
+                    }
+                ),
+                wait(),
+                rest(),
+            ),
+            "Birch": (
+                choice({"kind": "gather_wood"}),
+                choice({"kind": "build_shelter"}),
+                wait(),
+                rest(),
+            ),
+            "Cinder": (
+                choice({"kind": "forage"}),
+                choice({"kind": "eat", "amount": 1}),
+                wait(),
+                rest(),
+            ),
+            "Lumen": (
+                choice({"kind": "forage"}),
+                choice({"kind": "eat", "amount": 1}),
+                wait(),
+                rest(),
+            ),
+        }
+        nonphysical = {
+            "cycle_started",
+            "slot_started",
+            "choice_submitted",
+            "choice_recorded",
+            "speech_sent",
+        }
+
+        def physical_state(result: SurvivalResult) -> dict[str, object]:
+            final_state = result.final_state
+            return {
+                "day": final_state["day"],
+                "slot": final_state["slot"],
+                "resources": final_state["resources"],
+                "finished_reason": final_state["finished_reason"],
+                "survivors": [
+                    {
+                        key: survivor[key]
+                        for key in (
+                            "seat_id",
+                            "name",
+                            "energy",
+                            "food",
+                            "wood",
+                            "shelter",
+                            "resting",
+                            "alive",
+                            "died_on_day",
+                        )
+                    }
+                    for survivor in final_state["survivors"]
+                ],
+            }
+
+        def objective_events(result: SurvivalResult) -> Counter[str]:
+            return Counter(
+                json.dumps(
+                    {
+                        "day": event["day"],
+                        "slot": event["slot"],
+                        "kind": event["kind"],
+                        "actor": event["actor"],
+                        "detail": event["detail"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                for event in result.events
+                if event["kind"] not in nonphysical
+            )
+
+        for seed in (3, 17, 31):
+            for rotation in rotations:
+                with self.subTest(seed=seed, rotation=rotation):
+                    config = SurvivalConfig(max_days=1)
+                    global_world = make_survival_world(
+                        rotation,
+                        seed=seed,
+                        config=config,
+                        interaction_protocol=GLOBAL_BEATS_V2,
+                    )
+                    dialogue_world = make_survival_world(
+                        rotation,
+                        seed=seed,
+                        config=config,
+                        interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                    )
+                    global_result = run_survival(
+                        global_world,
+                        {
+                            name: ScriptedPolicy(scripts[name])
+                            for name in names
+                        },
+                        days=1,
+                    )
+                    dialogue_result = run_survival(
+                        dialogue_world,
+                        {
+                            name: ScriptedPolicy(scripts[name])
+                            for name in names
+                        },
+                        days=1,
+                    )
+
+                    self.assertEqual(
+                        physical_state(dialogue_result),
+                        physical_state(global_result),
+                    )
+                    self.assertEqual(
+                        objective_events(dialogue_result),
+                        objective_events(global_result),
+                    )
+
+    def test_dialogue_initiative_rotates_and_is_bound_into_replay(self) -> None:
+        names = ("Aster", "Birch", "Cinder", "Lumen")
+        world = make_survival_world(
+            names,
+            seed=3,
+            config=SurvivalConfig(max_days=2),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        policies = {
+            name: ScriptedPolicy((wait(), wait(), wait(), rest()) * 2)
+            for name in names
+        }
+
+        result = run_survival(world, policies, days=2)
+
+        slot_orders = [
+            event["detail"]["initiative_order"]
+            for event in result.events
+            if event["kind"] == "slot_started"
+        ]
+        self.assertEqual(
+            slot_orders,
+            [
+                ["Aster", "Birch", "Cinder", "Lumen"],
+                ["Birch", "Cinder", "Lumen", "Aster"],
+                ["Cinder", "Lumen", "Aster", "Birch"],
+                ["Lumen", "Aster", "Birch", "Cinder"],
+                ["Birch", "Cinder", "Lumen", "Aster"],
+                ["Cinder", "Lumen", "Aster", "Birch"],
+                ["Lumen", "Aster", "Birch", "Cinder"],
+                ["Aster", "Birch", "Cinder", "Lumen"],
+            ],
+        )
+        first_slot = [
+            record
+            for record in result.choice_tape
+            if record["cycle"] == 1 and record["slot"] == 1
+        ]
+        self.assertEqual(
+            [record["initiative_position"] for record in first_slot],
+            [1, 2, 3, 4],
+        )
+        self.assertTrue(
+            all(record["initiative_order"] == slot_orders[0] for record in first_slot)
+        )
+        self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+
+        tape = [dict(record) for record in result.choice_tape]
+        tape[0]["initiative_position"] = 2
+        with self.assertRaisesRegex(ValueError, "initiative position mismatch"):
+            replay_survival(replace(result, choice_tape=tuple(tape)))
+
+        for invalid_position in (True, 1.0):
+            with self.subTest(invalid_position=invalid_position):
+                tape = [dict(record) for record in result.choice_tape]
+                tape[0]["initiative_position"] = invalid_position
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "initiative position mismatch",
+                ):
+                    replay_survival(replace(result, choice_tape=tuple(tape)))
+
+        tape = [dict(record) for record in result.choice_tape]
+        tape[0]["initiative_order"] = list(reversed(tape[0]["initiative_order"]))
+        with self.assertRaisesRegex(ValueError, "initiative order mismatch"):
+            replay_survival(replace(result, choice_tape=tuple(tape)))
+
+    def test_dialogue_view_hides_global_sequence_side_channels(self) -> None:
+        class EarlierPolicy:
+            def __init__(self, action: Mapping[str, object]) -> None:
+                self.action = action
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                del view
+                return choice(
+                    self.action,
+                    {"to": "Birch", "text": "same words"},
+                )
+
+        class CapturePolicy:
+            def __init__(self) -> None:
+                self.view: SurvivorView | None = None
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                self.view = view
+                raise ValueError("stop after capturing the later view")
+
+        def later_view(action: Mapping[str, object]) -> dict[str, object]:
+            world = make_survival_world(
+                ("Aster", "Birch"),
+                seed=3,
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+            )
+            capture = CapturePolicy()
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "survival choice provider failed for 'Birch'",
+            ):
+                run_survival(
+                    world,
+                    {
+                        "Aster": EarlierPolicy(action),
+                        "Birch": capture,
+                    },
+                    days=1,
+                )
+            if capture.view is None:
+                raise AssertionError("later survivor received no view")
+            return capture.view.to_dict()
+
+        valid_view = later_view({"kind": "wait"})
+        invalid_view = later_view({"kind": "not_an_action"})
+
+        self.assertEqual(valid_view, invalid_view)
+        self.assertNotIn("id", valid_view["inbox"][0])
+        self.assertNotIn("sequence", valid_view["inbox"][0])
+
+        completed_world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            config=SurvivalConfig(max_days=2),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        run_survival(
+            completed_world,
+            {
+                "Aster": ScriptedPolicy((rest(),)),
+                "Birch": ScriptedPolicy((rest(),)),
+            },
+            days=1,
+        )
+        next_view = survival_view_for(completed_world, "Aster")
+        self.assertTrue(next_view.recent_events)
+        self.assertTrue(
+            all("sequence" not in event for event in next_view.recent_events)
+        )
+
+    def test_sequential_provider_failure_keeps_only_dialogue_committed(self) -> None:
+        class FailingPolicy:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.views: list[SurvivorView] = []
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                self.calls += 1
+                self.views.append(view)
+                raise ValueError("provider stopped")
+
+        world = make_survival_world(
+            ("Aster", "Birch", "Cinder", "Lumen"),
+            seed=3,
+            config=SurvivalConfig(max_days=1),
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        aster = ScriptedPolicy(
+            (
+                choice(
+                    {"kind": "forage"},
+                    {"to": "everyone", "text": "i foraged"},
+                ),
+            )
+        )
+        birch = ScriptedPolicy(
+            (wait({"to": "everyone", "text": "i will wait"}),)
+        )
+        cinder = FailingPolicy()
+        lumen = ScriptedPolicy((wait(),))
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "survival choice provider failed for 'Cinder'",
+        ):
+            run_survival(
+                world,
+                {
+                    "Aster": aster,
+                    "Birch": birch,
+                    "Cinder": cinder,
+                    "Lumen": lumen,
+                },
+                days=1,
+            )
+
+        self.assertEqual(
+            [event.actor for event in events(world, "choice_submitted")],
+            ["Aster", "Birch"],
+        )
+        self.assertEqual(
+            [message.text for message in world.messages],
+            ["i foraged", "i will wait"],
+        )
+        for physical_kind in (
+            "choice_energy_paid",
+            "food_foraged",
+            "wait_completed",
+            "rest_started",
+            "deadline_choice_cancelled",
+            "forced_collapse",
+        ):
+            self.assertFalse(events(world, physical_kind))
+        self.assertEqual(world.resources.food, 16)
+        self.assertEqual(world.resources.wood, 16)
+        for survivor in world.survivors.values():
+            self.assertEqual(survivor.energy, 16)
+            self.assertEqual(survivor.food, 1)
+            self.assertEqual(survivor.wood, 0)
+            self.assertFalse(survivor.resting)
+        self.assertEqual(cinder.calls, 1)
+        self.assertEqual(lumen.calls, 0)
+
+    def test_dialogue_final_beat_sends_speech_but_only_resolves_rest(self) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+
+        run_survival_cycle(
+            world,
+            (
+                {"Aster": rest(), "Birch": wait()},
+                {"Birch": wait()},
+                {"Birch": wait()},
+                {
+                    "Birch": choice(
+                        {"kind": "forage"},
+                        {"to": "Aster", "text": "too late"},
+                    )
+                },
+            ),
+        )
+
+        self.assertFalse(events(world, "food_foraged", actor="Birch"))
+        self.assertEqual(
+            [event.detail["message"]["text"] for event in events(
+                world, "speech_sent", actor="Birch"
+            )],
+            ["too late"],
+        )
+        self.assertEqual(
+            len(events(world, "deadline_choice_cancelled", actor="Birch")),
+            1,
+        )
+        self.assertEqual(len(events(world, "forced_collapse", actor="Birch")), 1)
+
+    def test_incomplete_final_dialogue_sends_speech_without_exhaustion(self) -> None:
+        class FailOnFourthCall:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def decide(self, view: SurvivorView) -> Mapping[str, object]:
+                del view
+                self.calls += 1
+                if self.calls == 4:
+                    raise ValueError("final response failed")
+                return wait()
+
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        aster = FailOnFourthCall()
+        birch = ScriptedPolicy(
+            (
+                wait(),
+                wait(),
+                wait(),
+                choice(
+                    {"kind": "forage"},
+                    {"to": "Aster", "text": "final words"},
+                ),
+            )
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "survival choice provider failed for 'Aster'",
+        ):
+            run_survival(
+                world,
+                {"Aster": aster, "Birch": birch},
+                days=1,
+            )
+
+        self.assertEqual(
+            [
+                message.text
+                for message in world.messages
+                if message.slot == world.config.slots_per_cycle
+            ],
+            ["final words"],
+        )
+        self.assertFalse(events(world, "deadline_choice_cancelled"))
+        self.assertFalse(events(world, "forced_collapse"))
+        self.assertFalse(events(world, "food_foraged"))
+        self.assertEqual(world.resources.food, 16)
+        self.assertEqual(world.survivors["Aster"].energy, 16)
+        self.assertEqual(world.survivors["Birch"].energy, 16)
 
     def test_next_slot_speech_delivery_supports_a_reply(self) -> None:
         world = make_survival_world(
@@ -597,6 +1252,28 @@ class SurvivalEngineTests(unittest.TestCase):
             "slot 1 is missing choices for awake survivors: Birch",
         ):
             run_survival_cycle(world, ({"Aster": rest()},))
+        self.assertEqual(world.to_dict(), before)
+
+    def test_dialogue_slot_map_rejects_an_extra_actor_before_mutation(self) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        before = world.to_dict()
+
+        with self.assertRaisesRegex(ValueError, "unavailable survivors: Cinder"):
+            run_survival_cycle(
+                world,
+                (
+                    {
+                        "Aster": rest(),
+                        "Birch": rest(),
+                        "Cinder": rest(),
+                    },
+                ),
+            )
+
         self.assertEqual(world.to_dict(), before)
 
     def test_unreachable_slot_maps_are_rejected_before_world_mutation(self) -> None:
@@ -999,6 +1676,34 @@ class SurvivalEngineTests(unittest.TestCase):
 
 
 class SurvivalPromptTests(unittest.TestCase):
+    def test_prompt_describes_sequential_dialogue_without_private_state(
+        self,
+    ) -> None:
+        world = make_survival_world(
+            ("Aster", "Birch"),
+            seed=3,
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+        view = survival_view_for(world, "Aster")
+        rendered = render_system_prompt(
+            "Aster",
+            interaction_protocol=view.interaction_protocol,
+        ) + render_turn_prompt(view)
+        lowered = rendered.lower()
+
+        self.assertIn("initiative order: aster -> birch", lowered)
+        self.assertIn("your position: 1 of 2", lowered)
+        self.assertIn("valid speech from earlier turns", lowered)
+        self.assertIn("speech is sent immediately", lowered)
+        self.assertIn("physical actions resolve together", lowered)
+        self.assertIn("cannot inspect earlier submitted physical actions", lowered)
+        self.assertIn("claims about them remain unverified", lowered)
+        self.assertIn("valid speech is still sent", lowered)
+        self.assertIn("only after every required final-beat choice", lowered)
+        self.assertIn("may be later in the same beat", lowered)
+        self.assertNotIn("seat-", rendered)
+        self.assertNotIn("provider", lowered)
+
     def test_prompt_describes_global_beat_contract_without_provider_leaks(
         self,
     ) -> None:

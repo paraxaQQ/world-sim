@@ -1,5 +1,15 @@
 # changelog
 
+## 0.12.0 - 2026-08-13
+
+- add `sequential-dialogue-v3`: speech commits in rotating initiative order while physical actions remain sealed until atomic beat resolution
+- let later actors hear and answer earlier same-beat speech without exposing the earlier actors' submitted actions or physical outcomes
+- retain earlier submissions and speech after a mid-beat provider failure while forbidding incomplete-beat energy, inventory, resource, shelter, rest, or exhaustion changes
+- bind initiative, exact views, provider-specific requests, provider identity, raw replies, parsed choices, cost authorizations, assignment transitions, and completed or partial state into format-v6 verification
+- add generic one-seat model-replacement receipts for v3 continuations and a low-reasoning GPT-5.6 Luna Responses API profile while preserving the selected seat's public identity
+- allow one to four models in the nonbehavioral adapter qualification and retain the changed wire contract as `paid-model-qualification-004`
+- preserve v1 and v2 canonical results, and retain a 5,120-run dialogue-v3 confirmation that passes all 21 unchanged ecology gates
+
 ## 0.11.0 - 2026-08-13
 
 - extend live campaigns beyond one continuation through format-v5 recursive parent links

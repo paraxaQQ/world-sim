@@ -18,6 +18,10 @@ from world_sim.survival.calibration import (  # noqa: E402
     canonical_calibration_json,
     run_calibration,
 )
+from world_sim.survival.models import (  # noqa: E402
+    GLOBAL_BEATS_V2,
+    INTERACTION_PROTOCOLS,
+)
 
 
 def _positive_int(raw_value: str) -> int:
@@ -42,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=_positive_int,
         default=DEFAULT_BOOTSTRAP_SAMPLES,
     )
+    parser.add_argument(
+        "--interaction-protocol",
+        choices=INTERACTION_PROTOCOLS,
+        default=GLOBAL_BEATS_V2,
+    )
     parser.add_argument("--output", type=Path)
     return parser
 
@@ -54,11 +63,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         seeds=seeds,
         cycles=args.cycles,
         bootstrap_samples=args.bootstrap_samples,
+        interaction_protocol=args.interaction_protocol,
     )
     payload = canonical_calibration_json(report)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(payload + "\n", encoding="utf-8")
+        args.output.write_bytes((payload + "\n").encode("utf-8"))
     print(payload)
     return 0
 

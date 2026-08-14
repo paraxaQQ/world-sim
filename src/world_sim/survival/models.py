@@ -15,7 +15,12 @@ DEFAULT_SURVIVOR_NAMES: tuple[str, ...] = (
 )
 SLOTS_V1 = "slots-v1"
 GLOBAL_BEATS_V2 = "global-beats-v2"
-INTERACTION_PROTOCOLS: tuple[str, ...] = (SLOTS_V1, GLOBAL_BEATS_V2)
+SEQUENTIAL_DIALOGUE_V3 = "sequential-dialogue-v3"
+INTERACTION_PROTOCOLS: tuple[str, ...] = (
+    SLOTS_V1,
+    GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
+)
 
 
 def validate_interaction_protocol(value: str) -> str:
@@ -342,6 +347,8 @@ class SurvivorView:
     allowed_actions: tuple[dict[str, Any], ...]
     prior_public_record: PriorPublicRecord | None = None
     interaction_protocol: str = SLOTS_V1
+    initiative_order: tuple[str, ...] = ()
+    initiative_position: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -362,6 +369,9 @@ class SurvivorView:
             payload["prior_public_record"] = self.prior_public_record.to_dict()
         if self.interaction_protocol != SLOTS_V1:
             payload["interaction_protocol"] = self.interaction_protocol
+        if self.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+            payload["initiative_order"] = list(self.initiative_order)
+            payload["initiative_position"] = self.initiative_position
         return payload
 
 

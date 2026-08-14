@@ -15,7 +15,13 @@ from .engine import (
     replay_survival,
     run_survival,
 )
-from .models import GLOBAL_BEATS_V2, SurvivalConfig, SurvivalResult, SurvivorView
+from .models import (
+    GLOBAL_BEATS_V2,
+    SurvivalConfig,
+    SurvivalResult,
+    SurvivorView,
+    validate_interaction_protocol,
+)
 
 
 LEAN_CAMP_V1 = "lean-camp-v1"
@@ -586,6 +592,7 @@ def run_calibration(
     seeds: Sequence[int] = tuple(range(256)),
     cycles: int = DEFAULT_CALIBRATION_CYCLES,
     bootstrap_samples: int = DEFAULT_BOOTSTRAP_SAMPLES,
+    interaction_protocol: str = GLOBAL_BEATS_V2,
 ) -> dict[str, Any]:
     seed_values = tuple(seeds)
     if not seed_values:
@@ -596,6 +603,7 @@ def run_calibration(
         raise ValueError("calibration seeds must be unique")
     if bootstrap_samples < 1:
         raise ValueError("bootstrap_samples must be positive")
+    active_protocol = validate_interaction_protocol(interaction_protocol)
     config = survival_preset(preset, cycles=cycles)
     module_directory = Path(__file__).parent
     source_sha256 = {
@@ -615,7 +623,7 @@ def run_calibration(
                     names,
                     seed=seed,
                     config=config,
-                    interaction_protocol=GLOBAL_BEATS_V2,
+                    interaction_protocol=active_protocol,
                 )
                 providers = {
                     name: scripted_policy(policy_name) for name in names
@@ -685,7 +693,7 @@ def run_calibration(
         },
         "preset": {"name": preset, "config": config.to_dict()},
         "design": {
-            "interaction_protocol": GLOBAL_BEATS_V2,
+            "interaction_protocol": active_protocol,
             "cycles": cycles,
             "slots_per_cycle": config.slots_per_cycle,
             "population": len(CALIBRATION_NAMES),

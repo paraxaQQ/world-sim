@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from .models import (
     DEFAULT_SURVIVOR_NAMES,
     GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
     SLOTS_V1,
     PriorPublicRecord,
     PriorPublicStatement,
@@ -260,10 +261,28 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
         after_sequence=survivor.last_observed_event_sequence,
         limit=world.config.max_recent_events,
     )
+    if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+        inbox = [
+            {
+                key: value
+                for key, value in message.items()
+                if key not in {"id", "sequence"}
+            }
+            for message in inbox
+        ]
+        recent_events = tuple(
+            {key: value for key, value in event.items() if key != "sequence"}
+            for event in recent_events
+        )
     config = world.config
     action_energy_costs = config.action_energy_costs
-    if world.interaction_protocol == GLOBAL_BEATS_V2:
+    if world.interaction_protocol in {GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3}:
         action_energy_costs = {**action_energy_costs, "wait": 0}
+    initiative_order: tuple[str, ...] = ()
+    initiative_position: int | None = None
+    if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+        initiative_order = _current_initiative_order(world, cycle, slot)
+        initiative_position = initiative_order.index(name) + 1
     return SurvivorView(
         name=name,
         day=cycle,
@@ -306,6 +325,8 @@ def survival_view_for(world: SurvivalWorld, name: str) -> SurvivorView:
         ),
         prior_public_record=world.prior_public_record,
         interaction_protocol=world.interaction_protocol,
+        initiative_order=initiative_order,
+        initiative_position=initiative_position,
     )
 
 
@@ -372,27 +393,54 @@ def run_survival_cycle(
         raise TypeError("every slot proposal value must be an object")
 
     consumed_slots = 0
+    seen_dialogue_actors: dict[int, set[str]] = {}
+
+    def proposals_for_views(
+        slot: int,
+        views: Mapping[str, SurvivorView],
+        *,
+        track: bool,
+    ) -> Mapping[str, object]:
+        try:
+            slot_proposals = proposals_by_slot[slot - 1]
+        except IndexError as error:
+            raise ValueError(f"missing proposal map for slot {slot}") from error
+        if world.interaction_protocol != SEQUENTIAL_DIALOGUE_V3:
+            return slot_proposals
+        if len(views) != 1:
+            raise RuntimeError("sequential dialogue requires one actor view")
+        actor = next(iter(views))
+        if track:
+            seen_dialogue_actors.setdefault(slot, set()).add(actor)
+        return (
+            {actor: slot_proposals[actor]}
+            if actor in slot_proposals
+            else {}
+        )
 
     def dry_source(
         slot: int, views: Mapping[str, SurvivorView]
     ) -> Mapping[str, object]:
         nonlocal consumed_slots
-        del views
         consumed_slots = slot
-        try:
-            return proposals_by_slot[slot - 1]
-        except IndexError as error:
-            raise ValueError(f"missing proposal map for slot {slot}") from error
+        return proposals_for_views(slot, views, track=True)
 
     _execute_cycle(deepcopy(world), dry_source)
     if len(proposals_by_slot) != consumed_slots:
         raise ValueError("proposal sequence contains unreachable slot maps")
+    if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+        for slot, seen in seen_dialogue_actors.items():
+            unknown = sorted(set(proposals_by_slot[slot - 1]) - seen)
+            if unknown:
+                raise ValueError(
+                    f"slot {slot} choices reference unavailable survivors: "
+                    + ", ".join(unknown)
+                )
 
     def source(
         slot: int, views: Mapping[str, SurvivorView]
     ) -> Mapping[str, object]:
-        del views
-        return proposals_by_slot[slot - 1]
+        return proposals_for_views(slot, views, track=False)
 
     return _execute_cycle(world, source)
 
@@ -409,6 +457,18 @@ def replay_survival(result: SurvivalResult) -> SurvivalResult:
         result.initial_state,
         event_sequence_offset=result.event_sequence_base,
     )
+    reconstructed_initial_state = _snapshot(
+        world,
+        include_observation_history=(
+            "observation_history" in result.initial_state
+        ),
+    )
+    if _canonical_json_text(
+        reconstructed_initial_state
+    ) != _canonical_json_text(result.initial_state):
+        raise ValueError(
+            "initial state does not match its reconstructed JSON types"
+        )
     event_start = len(world.events)
     records_by_cycle_slot: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for record in result.choice_tape:
@@ -423,6 +483,7 @@ def replay_survival(result: SurvivalResult) -> SurvivalResult:
                 f"choice tape skips from cycle {world.day} to cycle {cycle}"
             )
         used_slots: set[int] = set()
+        sequential_positions: dict[int, int] = {}
 
         def source(
             slot: int, views: Mapping[str, SurvivorView]
@@ -433,6 +494,46 @@ def replay_survival(result: SurvivalResult) -> SurvivalResult:
                     f"choice tape has no records for cycle {cycle} slot {slot}"
                 )
             used_slots.add(slot)
+            if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+                if len(views) != 1:
+                    raise ValueError("sequential replay requires one actor view")
+                actor, view = next(iter(views.items()))
+                position = sequential_positions.get(slot, 0)
+                if position >= len(records):
+                    raise ValueError(
+                        f"choice tape has no sequential record for {actor!r} "
+                        f"on cycle {cycle} slot {slot}"
+                    )
+                record = records[position]
+                expected_position = view.initiative_position
+                expected_order = list(view.initiative_order)
+                if str(record["actor"]) != actor:
+                    raise ValueError(
+                        f"choice tape actor for cycle {cycle} slot {slot} "
+                        "does not match initiative order"
+                    )
+                initiative_position = record.get("initiative_position")
+                if (
+                    type(initiative_position) is not int
+                    or initiative_position != expected_position
+                ):
+                    raise ValueError(
+                        f"choice tape initiative position mismatch for {actor!r} "
+                        f"on cycle {cycle} slot {slot}"
+                    )
+                if record.get("initiative_order") != expected_order:
+                    raise ValueError(
+                        f"choice tape initiative order mismatch for {actor!r} "
+                        f"on cycle {cycle} slot {slot}"
+                    )
+                actual_view_hash = _view_sha256(view)
+                if actual_view_hash != record["view_sha256"]:
+                    raise ValueError(
+                        f"choice tape view hash mismatch for {actor!r} "
+                        f"on cycle {cycle} slot {slot}"
+                    )
+                sequential_positions[slot] = position + 1
+                return {actor: record["raw_choice"]}
             expected_names = list(views)
             actual_names = [str(record["actor"]) for record in records]
             if actual_names != expected_names:
@@ -458,16 +559,23 @@ def replay_survival(result: SurvivalResult) -> SurvivalResult:
         }
         if used_slots != recorded_slots:
             raise ValueError(f"choice tape has unreachable slots in cycle {cycle}")
+        if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+            for slot in used_slots:
+                if sequential_positions.get(slot, 0) != len(
+                    records_by_cycle_slot[(cycle, slot)]
+                ):
+                    raise ValueError(
+                        f"choice tape has unreachable actors in cycle {cycle} "
+                        f"slot {slot}"
+                    )
 
     replayed = _result_from(
         world,
         _canonical_json_value(result.initial_state),
         event_start,
     )
-    if (
-        replayed.final_state != result.final_state
-        or replayed.events != result.events
-        or replayed.choice_tape != result.choice_tape
+    if _canonical_json_text(replayed.to_dict()) != _canonical_json_text(
+        result.to_dict()
     ):
         raise ValueError("choice tape replay does not match the recorded result")
     return replayed
@@ -500,6 +608,26 @@ def _execute_cycle(
         if not awake:
             break
         world.slot = slot
+        if world.interaction_protocol == SEQUENTIAL_DIALOGUE_V3:
+            initiative = _initiative_order(world, cycle, slot, awake)
+            _emit(
+                world,
+                cycle,
+                slot,
+                "slot_started",
+                None,
+                awake=[survivor.name for survivor in awake],
+                initiative_order=[survivor.name for survivor in initiative],
+            )
+            _run_sequential_dialogue_slot(
+                world,
+                cycle,
+                slot,
+                awake,
+                initiative,
+                source,
+            )
+            continue
         _emit(
             world,
             cycle,
@@ -524,6 +652,154 @@ def _execute_cycle(
         survivor.resting = False
     _finalize_survival(world, cycle)
     return tuple(world.events[event_start:])
+
+
+def _run_sequential_dialogue_slot(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    awake: Sequence[Survivor],
+    initiative: Sequence[Survivor],
+    source: _ProposalSource,
+) -> None:
+    initiative_names = tuple(survivor.name for survivor in initiative)
+    parsed: dict[str, ParsedSurvivalChoice] = {}
+    for position, survivor in enumerate(initiative, start=1):
+        view = survival_view_for(world, survivor.name)
+        proposals = source(slot, {survivor.name: view})
+        if not isinstance(proposals, Mapping):
+            raise TypeError(f"slot {slot} proposals must be an object")
+        unknown = sorted(set(proposals) - {survivor.name})
+        if unknown:
+            raise ValueError(
+                f"slot {slot} choices reference unavailable survivors: "
+                + ", ".join(unknown)
+            )
+        if set(proposals) != {survivor.name}:
+            raise ValueError(
+                f"slot {slot} is missing a choice for awake survivor: "
+                f"{survivor.name}"
+            )
+        parsed[survivor.name] = _collect_dialogue_choice(
+            world,
+            cycle,
+            slot,
+            survivor,
+            view,
+            proposals[survivor.name],
+            initiative_names=initiative_names,
+            initiative_position=position,
+        )
+    _resolve_dialogue_actions(world, cycle, slot, awake, parsed)
+
+
+def _collect_dialogue_choice(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    survivor: Survivor,
+    view: SurvivorView,
+    proposal: object,
+    *,
+    initiative_names: tuple[str, ...],
+    initiative_position: int,
+) -> ParsedSurvivalChoice:
+    raw_choice = _canonical_json_value(proposal)
+    observed_sequence = world.event_sequence_offset + len(world.events)
+    peers = [name for name in world.alive_names() if name != survivor.name]
+    _emit(
+        world,
+        cycle,
+        slot,
+        "choice_submitted",
+        survivor.name,
+        view_sha256=_view_sha256(view),
+        raw_choice=raw_choice,
+        initiative_order=list(initiative_names),
+        initiative_position=initiative_position,
+    )
+    choice = parse_survival_choice(
+        raw_choice,
+        actor=survivor.name,
+        living_peers=peers,
+        max_food_eaten=world.config.max_food_eaten,
+        max_speech_chars=world.config.max_speech_chars,
+        interaction_protocol=world.interaction_protocol,
+    )
+    _emit(
+        world,
+        cycle,
+        slot,
+        "choice_recorded",
+        survivor.name,
+        choice=choice.to_dict(),
+    )
+    if choice.action_error is not None:
+        _emit(
+            world,
+            cycle,
+            slot,
+            "action_rejected",
+            survivor.name,
+            reason=choice.action_error,
+            fallback="no_action",
+        )
+    if choice.speech_error is not None:
+        _emit(
+            world,
+            cycle,
+            slot,
+            "speech_rejected",
+            survivor.name,
+            reason=choice.speech_error,
+        )
+    survivor.last_observed_event_sequence = observed_sequence
+    if choice.speech_error is None and choice.speech is not None:
+        _resolve_speech(
+            world,
+            cycle,
+            slot,
+            [survivor],
+            {survivor.name: choice},
+        )
+    return choice
+
+
+def _resolve_dialogue_actions(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    awake: Sequence[Survivor],
+    parsed: Mapping[str, ParsedSurvivalChoice],
+) -> None:
+    resolving = list(awake)
+    if slot == world.config.slots_per_cycle:
+        resolving = []
+        for survivor in awake:
+            choice = parsed[survivor.name]
+            if choice.action_error is None and choice.action.kind == "rest":
+                resolving.append(survivor)
+            else:
+                _emit(
+                    world,
+                    cycle,
+                    slot,
+                    "deadline_choice_cancelled",
+                    survivor.name,
+                    attempted_choice=choice.to_dict(),
+                )
+    _charge_choice_costs(world, cycle, slot, resolving, parsed)
+    active = [survivor for survivor in resolving if survivor.alive]
+    valid_action = [
+        survivor
+        for survivor in active
+        if parsed[survivor.name].action_error is None
+    ]
+    _resolve_wait(world, cycle, slot, valid_action, parsed)
+    _resolve_forage(world, cycle, slot, valid_action, parsed)
+    _resolve_wood_gathering(world, cycle, slot, valid_action, parsed)
+    _resolve_gifts(world, cycle, slot, valid_action, parsed)
+    _resolve_personal_actions(world, cycle, slot, valid_action, parsed)
 
 
 def _run_slot(
@@ -1121,6 +1397,45 @@ def _awake_by_seat(world: SurvivalWorld) -> list[Survivor]:
     return [survivor for survivor in world.living_by_seat() if not survivor.resting]
 
 
+def _initiative_order(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+    eligible: Sequence[Survivor],
+) -> list[Survivor]:
+    ring = sorted(world.survivors.values(), key=lambda survivor: survivor.seat_id)
+    # Advancing once for both the day and beat rotates the daily opener while
+    # preserving one turn in every position per four-person, four-beat day.
+    # Filtering afterward keeps death and rest from reassigning that advantage.
+    offset = (cycle + slot - 2) % len(ring)
+    rotated = ring[offset:] + ring[:offset]
+    eligible_seats = {survivor.seat_id for survivor in eligible}
+    return [
+        survivor for survivor in rotated if survivor.seat_id in eligible_seats
+    ]
+
+
+def _current_initiative_order(
+    world: SurvivalWorld,
+    cycle: int,
+    slot: int,
+) -> tuple[str, ...]:
+    for event in reversed(world.events):
+        if event.day != cycle or event.slot != slot:
+            continue
+        if event.kind == "slot_started" and "initiative_order" in event.detail:
+            return tuple(str(name) for name in event.detail["initiative_order"])
+    return tuple(
+        survivor.name
+        for survivor in _initiative_order(
+            world,
+            cycle,
+            slot,
+            _awake_by_seat(world),
+        )
+    )
+
+
 def _ordered_view_survivors(
     world: SurvivalWorld, views: Mapping[str, SurvivorView]
 ) -> list[Survivor]:
@@ -1177,8 +1492,12 @@ def _view_sha256(view: SurvivorView) -> str:
 
 
 def _canonical_json_value(value: object) -> Any:
+    return json.loads(_canonical_json_text(value))
+
+
+def _canonical_json_text(value: object) -> str:
     try:
-        encoded = json.dumps(
+        return json.dumps(
             value,
             allow_nan=False,
             ensure_ascii=False,
@@ -1187,12 +1506,14 @@ def _canonical_json_value(value: object) -> Any:
         )
     except (TypeError, ValueError) as error:
         raise TypeError("survival choices must be JSON-serializable values") from error
-    return json.loads(encoded)
 
 
 def _choice_tape(events: Sequence[SurvivalEvent]) -> tuple[dict[str, Any], ...]:
-    return tuple(
-        {
+    records: list[dict[str, Any]] = []
+    for event in events:
+        if event.kind != "choice_submitted":
+            continue
+        record = {
             "day": event.day,
             "cycle": event.day,
             "slot": event.slot,
@@ -1200,9 +1521,13 @@ def _choice_tape(events: Sequence[SurvivalEvent]) -> tuple[dict[str, Any], ...]:
             "view_sha256": event.detail["view_sha256"],
             "raw_choice": event.detail["raw_choice"],
         }
-        for event in events
-        if event.kind == "choice_submitted"
-    )
+        if "initiative_position" in event.detail:
+            record["initiative_position"] = event.detail[
+                "initiative_position"
+            ]
+            record["initiative_order"] = event.detail["initiative_order"]
+        records.append(record)
+    return tuple(records)
 
 
 def _prior_public_record_from_result(
@@ -1485,13 +1810,16 @@ def _reject_resolution(
 def _strict_cycle_alias(value: Mapping[str, Any], *, context: str) -> int:
     if "day" not in value and "cycle" not in value:
         raise ValueError(f"{context} has no cycle")
+    for key in ("day", "cycle"):
+        if key in value and type(value[key]) is not int:
+            raise ValueError(f"{context} {key} must be an integer")
     if "day" in value and "cycle" in value:
-        day = int(value["day"])
-        cycle = int(value["cycle"])
+        day = value["day"]
+        cycle = value["cycle"]
         if day != cycle:
             raise ValueError(f"{context} day and cycle aliases disagree")
         return cycle
-    return int(value["cycle"] if "cycle" in value else value["day"])
+    return value["cycle"] if "cycle" in value else value["day"]
 
 
 def _emit(

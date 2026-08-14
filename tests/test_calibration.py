@@ -23,7 +23,7 @@ from world_sim.survival.calibration import (
     survival_preset,
 )
 from world_sim.survival.engine import make_survival_world, survival_view_for
-from world_sim.survival.models import GLOBAL_BEATS_V2
+from world_sim.survival.models import GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3
 
 
 class SurvivalCalibrationTests(unittest.TestCase):
@@ -184,6 +184,22 @@ class SurvivalCalibrationTests(unittest.TestCase):
             first,
         )
 
+    def test_calibration_can_target_sequential_dialogue(self) -> None:
+        report = run_calibration(
+            seeds=(7,),
+            cycles=2,
+            bootstrap_samples=8,
+            interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        )
+
+        self.assertEqual(
+            report["design"]["interaction_protocol"],
+            SEQUENTIAL_DIALOGUE_V3,
+        )
+        self.assertEqual(report["design"]["run_count"], 20)
+        for metrics in report["policy_metrics"].values():
+            self.assertEqual(metrics["replay_exact_rate"], 1.0)
+
     def test_cli_stdout_and_output_are_the_same_canonical_json(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]
         script = repository_root / "tools" / "calibrate_survival.py"
@@ -209,6 +225,9 @@ class SurvivalCalibrationTests(unittest.TestCase):
             )
 
             stdout = completed.stdout.strip()
+            output_bytes = output.read_bytes()
+            self.assertTrue(output_bytes.endswith(b"\n"))
+            self.assertNotIn(b"\r\n", output_bytes)
             self.assertEqual(output.read_text(encoding="utf-8").strip(), stdout)
             parsed = json.loads(stdout)
             self.assertEqual(

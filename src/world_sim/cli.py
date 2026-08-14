@@ -31,7 +31,7 @@ from .selection import (
 )
 from .survival.calibration import CALIBRATION_NAMES, LEAN_CAMP_V1
 from .survival.demo import result_sha256, run_survival_demo, survival_metrics
-from .survival.models import GLOBAL_BEATS_V2
+from .survival.models import GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -127,6 +127,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     continue_live.add_argument(
         "--cycles", "--days", dest="cycles", type=int, default=1
     )
+    continue_live.add_argument(
+        "--interaction-protocol",
+        choices=(GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3),
+        default=GLOBAL_BEATS_V2,
+    )
+    continue_live.add_argument(
+        "--replace-model",
+        action="append",
+        default=[],
+        metavar="PUBLIC_NAME=PROVIDER/MODEL",
+        help="replace exactly one verified seat assignment for sequential-dialogue-v3",
+    )
+    continue_live.add_argument(
+        "--replacement-reason",
+        help="required audit reason when --replace-model is supplied",
+    )
     continue_live.add_argument("--shared-wood-stock", type=int, default=0)
     continue_live.add_argument(
         "--transition-id",
@@ -180,7 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dest="models",
         required=True,
         metavar="opencode-paid/MODEL",
-        help="assign one paid model to the adapter panel; repeat exactly four times",
+        help="assign one paid model to qualify; repeat up to four times",
     )
     qualify_live.add_argument(
         "--max-completion-tokens",
@@ -193,10 +209,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_LIVE_TEMPERATURE,
     )
     qualify_live.add_argument(
+        "--reasoning-effort",
+        choices=("provider-default", "low"),
+        default=DEFAULT_LIVE_REASONING_EFFORT,
+    )
+    qualify_live.add_argument(
         "--max-paid-usd",
         type=Decimal,
         required=True,
-        help="conservative authorization ceiling for all four qualification calls",
+        help="conservative authorization ceiling for all qualification calls",
     )
     qualify_live.add_argument(
         "--timeout-seconds",
@@ -234,10 +255,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     live_output: TextIO | None = None
     live_commands = {"survive-live", "continue-live", "qualify-live"}
     if args.command in live_commands:
-        if args.command != "continue-live" and len(args.models) != len(
-            CALIBRATION_NAMES
-        ):
-            parser.error(f"{args.command} requires exactly four model assignments")
+        if args.command == "survive-live" and len(args.models) != len(CALIBRATION_NAMES):
+            parser.error("survive-live requires exactly four model assignments")
+        if args.command == "qualify-live" and not 1 <= len(args.models) <= 4:
+            parser.error("qualify-live requires between one and four model assignments")
         try:
             live_output = _reserve_live_output(args.output)
         except FileExistsError:
@@ -320,6 +341,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shared_resource="wood",
                 shared_stock=args.shared_wood_stock,
                 transition_reason=args.transition_id,
+                interaction_protocol=args.interaction_protocol,
+                model_replacements=args.replace_model,
+                replacement_reason=args.replacement_reason,
                 max_calls=args.max_calls,
                 max_completion_tokens=args.max_completion_tokens,
                 temperature=args.temperature,
@@ -373,6 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 model_refs=args.models,
                 max_completion_tokens=args.max_completion_tokens,
                 temperature=args.temperature,
+                reasoning_effort=args.reasoning_effort,
                 max_paid_usd=args.max_paid_usd,
                 timeout_seconds=args.timeout_seconds,
                 checkpoint=lambda current: _replace_reserved_live_output(

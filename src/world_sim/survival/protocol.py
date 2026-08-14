@@ -5,7 +5,12 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Mapping, NoReturn, Sequence
 
-from .models import GLOBAL_BEATS_V2, SLOTS_V1, validate_interaction_protocol
+from .models import (
+    GLOBAL_BEATS_V2,
+    SEQUENTIAL_DIALOGUE_V3,
+    SLOTS_V1,
+    validate_interaction_protocol,
+)
 
 MODEL_MAX_COMPLETION_TOKENS = 10_000
 MODEL_MAX_RESPONSE_BYTES = 8_192
@@ -67,7 +72,11 @@ def allowed_survival_actions(
     peers = list(living_peers)
     actions: tuple[dict[str, Any], ...] = (
         {"kind": "rest"},
-        *(({"kind": "wait"},) if active_protocol == GLOBAL_BEATS_V2 else ()),
+        *(
+            ({"kind": "wait"},)
+            if active_protocol in {GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3}
+            else ()
+        ),
         {"kind": "forage"},
         {"kind": "gather_wood"},
         {"kind": "eat", "amount": f"integer 1..{max_food_eaten}"},
@@ -178,7 +187,7 @@ def _parse_action(
         "give_food": {"kind", "target", "amount"},
         "give_wood": {"kind", "target", "amount"},
     }
-    if interaction_protocol == GLOBAL_BEATS_V2:
+    if interaction_protocol in {GLOBAL_BEATS_V2, SEQUENTIAL_DIALOGUE_V3}:
         expected_keys["wait"] = {"kind"}
     if kind not in expected_keys:
         return None, f"unknown action kind {kind!r}"

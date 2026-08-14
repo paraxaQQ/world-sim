@@ -14,6 +14,7 @@ from world_sim.cli import _replace_reserved_live_output, _reserve_live_output, m
 from world_sim.model_host import (
     ChatTransport,
     EndpointSpec,
+    LUNA_MODEL_REF,
     PAID_QUALIFICATION_MODELS,
     TransportResponse,
     run_paid_adapter_qualification,
@@ -170,7 +171,7 @@ class PaidQualificationTests(unittest.TestCase):
             final = {
                 "mode": "paid_adapter_qualification",
                 "status": "passed",
-                "qualification_id": "paid-panel-qualification-003",
+                "qualification_id": "paid-model-qualification-004",
                 "calls": [],
                 "summary": {"models_passed": 4},
             }
@@ -185,6 +186,45 @@ class PaidQualificationTests(unittest.TestCase):
             for model in PAID_QUALIFICATION_MODELS:
                 arguments.extend(("--model", model))
             arguments.extend(("--max-paid-usd", "0.30", "--output", str(output)))
+            with patch("world_sim.cli.run_paid_adapter_qualification", fake_run):
+                with redirect_stdout(StringIO()):
+                    exit_code = main(arguments)
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), final)
+
+    def test_cli_accepts_a_single_luna_low_reasoning_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "luna-qualification.json"
+            final = {
+                "mode": "paid_adapter_qualification",
+                "status": "passed",
+                "qualification_id": "paid-model-qualification-004",
+                "calls": [],
+                "summary": {"models_passed": 1},
+            }
+
+            def fake_run(**kwargs: object) -> dict[str, object]:
+                self.assertEqual(kwargs["model_refs"], [LUNA_MODEL_REF])
+                self.assertEqual(kwargs["max_completion_tokens"], 4_096)
+                self.assertEqual(kwargs["reasoning_effort"], "low")
+                checkpoint = kwargs["checkpoint"]
+                checkpoint(final)
+                return final
+
+            arguments = [
+                "qualify-live",
+                "--model",
+                LUNA_MODEL_REF,
+                "--max-completion-tokens",
+                "4096",
+                "--reasoning-effort",
+                "low",
+                "--max-paid-usd",
+                "0.03",
+                "--output",
+                str(output),
+            ]
             with patch("world_sim.cli.run_paid_adapter_qualification", fake_run):
                 with redirect_stdout(StringIO()):
                     exit_code = main(arguments)
@@ -275,6 +315,80 @@ class PaidQualificationTests(unittest.TestCase):
                 "additionalProperties": False,
             },
         )
+
+    def test_single_luna_qualification_uses_low_reasoning_responses_profile(
+        self,
+    ) -> None:
+        secret = "single-luna-qualification-key"
+        transport = FakeTransport([_responses_response("gpt-5.6-luna")])
+
+        artifact = run_paid_adapter_qualification(
+            model_refs=(LUNA_MODEL_REF,),
+            max_completion_tokens=4_096,
+            reasoning_effort="low",
+            max_paid_usd="0.03",
+            timeout_seconds=300,
+            transport=transport,
+            environ={"OPENCODE_ZEN_API_KEY": secret},
+        )
+
+        self.assertEqual(artifact["status"], "passed")
+        self.assertEqual(artifact["qualification_id"], "paid-model-qualification-004")
+        self.assertEqual(artifact["summary"]["models_requested"], 1)
+        self.assertEqual(artifact["summary"]["models_attempted"], 1)
+        self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 1)
+        self.assertEqual(
+            artifact["paid_preflight"]["panel_envelope_cost_bound_usd"],
+            "0.02",
+        )
+        self.assertEqual(
+            artifact["paid_preflight"]["calls"][0]["input_per_million_usd"],
+            "0.2",
+        )
+        self.assertEqual(
+            artifact["paid_preflight"]["calls"][0]["output_per_million_usd"],
+            "1.2",
+        )
+        request = transport.requests[0]
+        self.assertEqual(
+            request["endpoint"].url,
+            "https://opencode.ai/zen/v1/responses",
+        )
+        self.assertEqual(request["api_key"], secret)
+        body = request["body"]
+        self.assertEqual(
+            set(body),
+            {
+                "model",
+                "input",
+                "max_output_tokens",
+                "reasoning",
+                "text",
+                "stream",
+                "store",
+            },
+        )
+        self.assertEqual(body["model"], "gpt-5.6-luna")
+        self.assertEqual(body["max_output_tokens"], 4_096)
+        self.assertEqual(body["reasoning"], {"effort": "low"})
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertNotIn("temperature", body)
+        self.assertNotIn(secret, json.dumps(artifact))
+
+    def test_luna_qualification_rejects_default_reasoning_before_transport(
+        self,
+    ) -> None:
+        transport = FakeTransport([])
+        with self.assertRaisesRegex(ValueError, "qualification requires reasoning_effort low"):
+            run_paid_adapter_qualification(
+                model_refs=(LUNA_MODEL_REF,),
+                max_completion_tokens=4_096,
+                max_paid_usd="0.03",
+                timeout_seconds=300,
+                transport=transport,
+                environ={},
+            )
+        self.assertEqual(transport.requests, [])
 
     def test_schema_failure_does_not_hide_later_models_or_trigger_a_retry(self) -> None:
         responses = _passing_panel()
