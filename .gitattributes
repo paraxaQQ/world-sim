@@ -5,6 +5,7 @@ outputs/v0.8.0-paid-panel-qualification-001.json -text
 outputs/v0.8.0-paid-panel-qualification-002.json -text
 outputs/v0.8.0-paid-survival-29993.json -text
 outputs/v0.12.0-sequential-dialogue-v3-confirmation.json -text
+outputs/v0.12.0-gpt-5.6-luna-qualification.json -text
 src/world_sim/cli.py text eol=lf
 src/world_sim/model_host.py text eol=lf
 src/world_sim/survival/calibration.py text eol=lf
