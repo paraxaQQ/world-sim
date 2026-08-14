@@ -21,7 +21,7 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 
-v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story. v0.13.1 lets a verified world continue naturally without forcing another resource intervention.
+v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story. v0.13.2 lets a verified world continue naturally without forcing another resource intervention, including through the separate postmortem verifier.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 

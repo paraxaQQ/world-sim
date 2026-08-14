@@ -41,7 +41,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.13.1"
+WORLD_SIM_VERSION = "0.13.2"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -3103,33 +3103,38 @@ def _verify_continuation_boundary(
         "event",
     }:
         raise ValueError("parent transition_receipt is invalid")
-    if transition_receipt.get("method") != (
+    transition_method = transition_receipt.get("method")
+    if transition_method == "verified_parent_state_preserved":
+        if transition_receipt.get("event") is not None:
+            raise ValueError("parent preserved-state transition event must be null")
+    elif transition_method == (
         "deterministic_between_cycle_shared_resource_adjustment"
     ):
+        transition = transition_receipt.get("event")
+        if not isinstance(transition, Mapping):
+            raise ValueError("parent transition event must be an object")
+        detail = transition.get("detail")
+        if not isinstance(detail, Mapping):
+            raise ValueError("parent transition event detail must be an object")
+        resource = detail.get("resource")
+        stock = detail.get("after")
+        reason = detail.get("reason")
+        if not isinstance(resource, str):
+            raise ValueError("parent transition resource must be text")
+        if isinstance(stock, bool) or not isinstance(stock, int):
+            raise ValueError("parent transition stock must be an integer")
+        if not isinstance(reason, str):
+            raise ValueError("parent transition reason must be text")
+        expected_transition = adjust_shared_resource(
+            expected_world,
+            resource=resource,
+            stock=stock,
+            reason=reason,
+        ).to_dict()
+        if dict(transition) != expected_transition:
+            raise ValueError("parent transition receipt does not reconstruct exactly")
+    else:
         raise ValueError("parent transition receipt method is invalid")
-    transition = transition_receipt.get("event")
-    if not isinstance(transition, Mapping):
-        raise ValueError("parent transition event must be an object")
-    detail = transition.get("detail")
-    if not isinstance(detail, Mapping):
-        raise ValueError("parent transition event detail must be an object")
-    resource = detail.get("resource")
-    stock = detail.get("after")
-    reason = detail.get("reason")
-    if not isinstance(resource, str):
-        raise ValueError("parent transition resource must be text")
-    if isinstance(stock, bool) or not isinstance(stock, int):
-        raise ValueError("parent transition stock must be an integer")
-    if not isinstance(reason, str):
-        raise ValueError("parent transition reason must be text")
-    expected_transition = adjust_shared_resource(
-        expected_world,
-        resource=resource,
-        stock=stock,
-        reason=reason,
-    ).to_dict()
-    if dict(transition) != expected_transition:
-        raise ValueError("parent transition receipt does not reconstruct exactly")
 
     public_record = expected_world.prior_public_record
     if public_record is None:

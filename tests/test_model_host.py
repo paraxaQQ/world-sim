@@ -1952,7 +1952,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.2")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -2307,7 +2307,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.2")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -3346,8 +3346,7 @@ class ModelHostTests(unittest.TestCase):
             dying_day = run_live_survival_continuation(
                 parent_path=root_path,
                 expected_parent_sha256=root_sha256,
-                transition_reason="paid_postmortem_death_fixture",
-                shared_stock=0,
+                preserve_shared_resources=True,
                 max_calls=16,
                 require_complete_budget=True,
                 max_completion_tokens=1_024,

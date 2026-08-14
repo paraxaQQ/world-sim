@@ -1,5 +1,10 @@
 # changelog
 
+## 0.13.2 - 2026-08-13
+
+- let the postmortem lineage validator reconstruct a preserved-state continuation boundary before issuing any reflection call
+- cover the natural-continuation death path through postmortem generation and standalone verification
+
 ## 0.13.1 - 2026-08-13
 
 - add an explicit `--no-resource-adjustment` continuation path that preserves the verified parent state instead of forcing a between-cycle intervention
