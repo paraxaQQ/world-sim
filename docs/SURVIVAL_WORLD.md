@@ -140,6 +140,8 @@ The retained v3 confirmation ran 5,120 simulations: five policies across 256 hel
 - [v0.12.0 calibration proof](../outputs/v0.12.0-sequential-dialogue-v3-proof.md)
 - [v0.12.0 retained artifact](../outputs/v0.12.0-sequential-dialogue-v3-confirmation.json), SHA-256 `c0039eee84f65fe342dd848ecd811f38bc3fb9f4c01faf05bccf9be59b27d5a9`
 
-This evidence establishes deterministic mechanics, replay, failure isolation, and scripted ecology parity for this calibration design. It does not establish how live models will use same-beat dialogue or whether they will cooperate, defect, deceive, trust, or survive. No live session 4 is included in this release.
+This calibration evidence establishes deterministic mechanics, replay, failure isolation, and scripted ecology parity. It does not predict how live models will use same-beat dialogue.
+
+Session 4 is the first retained live v3 observation. It completed with two reciprocal costly wood transfers, one rejected paid shelter attempt, four survivors, and no shelter. The [session proof](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) and [retained artifact](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json) preserve the full trace. One episode cannot establish a stable tendency to cooperate, defect, deceive, trust, or survive.
 
 Combat, theft, hunting, reproduction, mutation, territory, money, tool use, and external systems remain out of scope.

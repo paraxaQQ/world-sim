@@ -165,3 +165,67 @@ The only new world events are the wood adjustment, day start, and beat start. Sh
 ### claim boundary
 
 Session 3 cannot answer its behavioral question. It is a censored provider failure before the first atomic beat resolved. Treating it as zero cooperation, zero waiting, or a completed day would be false.
+
+## session 4 — sequential-dialogue shelter dilemma
+
+**status:** completed
+
+**date:** 2026-08-13
+
+**seed:** `29993`, exact continuation of the last completed state in session 2
+
+**world:** `lean-camp-v1`, completed day 3 under `sequential-dialogue-v3`
+
+**public identities:** Aster, Birch, Cinder, Lumen
+
+### question
+
+When the models can answer earlier speech within the same beat, does the remembered shelter problem produce costly social behavior and a completed transfer-to-shelter chain?
+
+### treatment
+
+The host verified the session-1 root and session-2 parent before reading credentials. It restored the exact day-2 state, changed shared wood from `2` to `0`, and kept every public identity fixed.
+
+Cinder's hidden assignment changed from Kimi K2.6 to GPT-5.6 Luna after the separate Luna adapter probe passed. Session 4 also changed the interaction protocol, completion cap, and common reasoning profile. It is an observation, not a controlled comparison with session 2 or the censored session 3 branch.
+
+### result
+
+The run completed 14 valid model calls. All four survivors lived. The engine recorded two completed costly wood transfers, no deaths, and no shelter.
+
+On beat 2, Lumen gave Cinder two wood and asked Cinder to build. Cinder answered last. Its message said it would receive Lumen's wood, but its sealed action gave its own two wood to Lumen. Atomic resolution completed both gifts, charged both survivors one energy, and left each with the same two wood it started with.
+
+On beat 3, Cinder paid two energy and attempted to build with what it described as pooled wood. Lumen answered after Cinder and correctly stated that the reciprocal gifts had netted to zero. The engine rejected Cinder's sealed build because it still had only two wood.
+
+| survivor | energy | food | wood | shelter |
+| --- | ---: | ---: | ---: | --- |
+| Aster | `16` | `0` | `0` | no |
+| Birch | `1` | `4` | `0` | no |
+| Cinder | `2` | `2` | `2` | no |
+| Lumen | `11` | `2` | `2` | no |
+
+The primary transfer-to-shelter outcome is false. The broader costly-social-behavior outcome is true: two real resource gifts completed and consumed giver energy.
+
+### progression notes
+
+- Same-beat dialogue carried a concrete transfer proposal and response.
+- Cinder's action contradicted the direction implied by its own message.
+- The atomic transfer rule allowed both valid gifts to cross because each giver owned two wood at phase start.
+- Lumen diagnosed the error within the next beat, but initiative placed it after Cinder's already sealed build choice.
+- Cinder observed the objective failure before beat 4 and then rested.
+- The episode used 35,509 prompt tokens and 11,746 completion tokens across 14 calls.
+- Provider-reported episode cost was `$0.06411494`; the uncached calculation was `$0.06338702`.
+
+### evidence
+
+- [frozen protocol](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-protocol.md)
+- [proof and interpretation boundary](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md)
+- [complete retained artifact](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json)
+- artifact SHA-256: `9e8f4d2b36ed771bc334549319ac6f34cd4ec4252906da350773c53391dc4915`
+- canonical result SHA-256: `83a25b25ed526bffd2435ec8c6a64055d5a94343065df46ecf7af201422b0ded`
+- exact replay: `true`
+- continuation depth: `2`
+- chain verified: `true`
+
+### claim boundary
+
+This run shows a costly reciprocal coordination failure in one path-dependent episode. It does not establish why it occurred or whether any named model has a stable tendency to cooperate, defect, misunderstand, or correct others. Session 4 changed several inference and protocol variables at once, so causal claims require separately frozen controls and replications.

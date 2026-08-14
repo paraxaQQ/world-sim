@@ -5,6 +5,8 @@
 - translate Luna's strict response schemas to the documented OpenAI subset by replacing literal `const` constraints with typed single-value enums and `oneOf` action unions with `anyOf`
 - keep the canonical world prompt and existing providers' schema bodies unchanged so committed campaign artifacts still reconstruct exactly
 - retain the failed Luna probe as qualification 004 and reserve qualification 005 for the repaired adapter
+- pass Luna qualification 005 in one call with exact model identity, strict JSON, and `$0.000051` provider-reported cost
+- retain completed Session 4 with 14 valid calls, two reciprocal costly wood transfers, one rejected paid shelter attempt, four survivors, no shelters, and exact format-v6 replay
 
 ## 0.12.0 - 2026-08-13
 

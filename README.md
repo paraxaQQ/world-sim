@@ -19,8 +19,9 @@ we keep one continuous campaign instead of rebuilding the world for every episod
 - **session 1:** all four survivors lived. every model talked about cooperation; nobody transferred food or wood.
 - **session 2:** Birch and Aster stated a valid shelter plan, but nobody transferred the wood needed to execute it.
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
+- **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 
-v0.12.0 does not include or claim a live session 4. it releases and verifies the next interaction protocol before that protocol touches the paid campaign.
+v0.12.1 retains the complete session-4 trace and replays it without another model call.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
@@ -163,6 +164,18 @@ py -3.11 tools\verify_live_artifact.py `
 ```
 
 session 3 is a historical format-v5 artifact. it failed before its first beat resolved, so the verifier checks its exact partial state and failed-call receipt instead of inventing a completed result.
+
+verify the completed session-1 → session-2 → session-4 branch:
+
+```powershell
+py -3.11 tools\verify_live_artifact.py `
+  outputs\v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json `
+  --ancestor outputs\v0.8.0-paid-survival-29993.json `
+  --parent outputs\v0.9.0-session-002-shelter-dilemma-29993.json `
+  --artifact-sha256 9e8f4d2b36ed771bc334549319ac6f34cd4ec4252906da350773c53391dc4915
+```
+
+session 4 branches from session 2 because session 3 changed no physical state. its [proof](outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) separates the real costly transfers from the failed shelter plan and the models' claims about it.
 
 ## the model contract
 
