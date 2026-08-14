@@ -41,7 +41,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.13.0"
+WORLD_SIM_VERSION = "0.13.1"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -948,7 +948,8 @@ def run_live_survival_continuation(
     additional_cycles: int = 1,
     shared_resource: str = "wood",
     shared_stock: int = 0,
-    transition_reason: str,
+    transition_reason: str | None = None,
+    preserve_shared_resources: bool = False,
     interaction_protocol: str = GLOBAL_BEATS_V2,
     initiative_phase: int = 0,
     model_replacements: Sequence[str] = (),
@@ -998,12 +999,29 @@ def run_live_survival_continuation(
         interaction_protocol=interaction_protocol,
         initiative_phase=initiative_phase,
     )
-    transition_event = adjust_shared_resource(
-        world,
-        resource=shared_resource,
-        stock=shared_stock,
-        reason=transition_reason,
-    )
+    if not isinstance(preserve_shared_resources, bool):
+        raise TypeError("preserve_shared_resources must be a boolean")
+    if preserve_shared_resources:
+        if transition_reason is not None:
+            raise ValueError(
+                "transition_reason cannot be used when shared resources are preserved"
+            )
+        if shared_stock != 0:
+            raise ValueError(
+                "shared_stock cannot be used when shared resources are preserved"
+            )
+        transition_event = None
+    else:
+        if transition_reason is None:
+            raise ValueError(
+                "transition_reason is required unless shared resources are preserved"
+            )
+        transition_event = adjust_shared_resource(
+            world,
+            resource=shared_resource,
+            stock=shared_stock,
+            reason=transition_reason,
+        )
     active_names = set(world.alive_names())
     active_assignments = tuple(
         assignment
@@ -1080,10 +1098,17 @@ def run_live_survival_continuation(
         "parent_format_version": parent_artifact["format_version"],
         "parent_mode": parent_artifact["mode"],
     }
-    transition_receipt = {
-        "method": "deterministic_between_cycle_shared_resource_adjustment",
-        "event": transition_event.to_dict(),
-    }
+    transition_receipt = (
+        {
+            "method": "verified_parent_state_preserved",
+            "event": None,
+        }
+        if transition_event is None
+        else {
+            "method": "deterministic_between_cycle_shared_resource_adjustment",
+            "event": transition_event.to_dict(),
+        }
+    )
     public_record_receipt = {
         "method": "final_public_broadcast_per_identity_verbatim",
         "statement_status": "unverified",

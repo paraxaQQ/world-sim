@@ -1,5 +1,11 @@
 # changelog
 
+## 0.13.1 - 2026-08-13
+
+- add an explicit `--no-resource-adjustment` continuation path that preserves the verified parent state instead of forcing a between-cycle intervention
+- bind the preserved-state boundary into the transition receipt and reconstruct it in offline verification
+- reject conflicting adjustment options and forged events before provider use or artifact acceptance
+
 ## 0.13.0 - 2026-08-13
 
 - add `initiative_phase` as a v3-only treatment that rotates call order without moving seats, model assignments, private state, history, seed, rng, or physical resolution

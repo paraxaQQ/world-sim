@@ -739,6 +739,67 @@ class ModelHostTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, prompt.casefold())
 
+    def test_live_continuation_can_preserve_the_verified_parent_resources(
+        self,
+    ) -> None:
+        parent = self._continuation_parent()
+        transport = FakeTransport([response(REST_REPLY) for _ in FREE_MODELS])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                preserve_shared_resources=True,
+                max_calls=4,
+                transport=transport,
+                environ={},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(
+            artifact["transition_receipt"],
+            {"method": "verified_parent_state_preserved", "event": None},
+        )
+        self.assertEqual(artifact["result"]["initial_state"]["resources"]["wood"], 2)
+        self.assertFalse(
+            any(
+                event["kind"] == "resource_adjusted"
+                for event in artifact["result"]["events"]
+            )
+        )
+        first_prompt = transport.requests[0]["body"]["messages"][1]["content"]
+        self.assertIn("wood available: 2 of 12", first_prompt)
+        self.assertEqual(
+            replay_survival(result_from(artifact)).to_dict(), artifact["result"]
+        )
+
+    def test_live_continuation_rejects_conflicting_preservation_options(
+        self,
+    ) -> None:
+        parent = self._continuation_parent()
+        transport = FakeTransport([])
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            for options, message in (
+                (
+                    {"transition_reason": "unexpected_adjustment"},
+                    "transition_reason cannot be used",
+                ),
+                ({"shared_stock": 1}, "shared_stock cannot be used"),
+            ):
+                with self.subTest(options=options):
+                    with self.assertRaisesRegex(ValueError, message):
+                        run_live_survival_continuation(
+                            parent_path=parent_path,
+                            expected_parent_sha256=parent_sha256,
+                            preserve_shared_resources=True,
+                            max_calls=4,
+                            transport=transport,
+                            environ={},
+                            **options,
+                        )
+        self.assertEqual(transport.requests, [])
+
     def test_live_continuation_rejects_tamper_before_transport(self) -> None:
         parent = self._continuation_parent()
         parent["result"]["final_state"]["survivors"][0]["energy"] += 1
@@ -1659,6 +1720,45 @@ class ModelHostTests(unittest.TestCase):
             self.assertIn("requires at least 4 model calls", completed.stderr)
             self.assertFalse(output.exists())
 
+    def test_continue_cli_wires_no_resource_adjustment_before_transport(
+        self,
+    ) -> None:
+        parent = self._continuation_parent()
+        with tempfile.TemporaryDirectory() as directory:
+            parent_path, parent_sha256 = self._write_parent(directory, parent)
+            output = Path(directory) / "natural-continuation.json"
+            environment = dict(os.environ)
+            environment["PYTHONPATH"] = str(
+                Path(__file__).resolve().parents[1] / "src"
+            )
+
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-m",
+                    "world_sim",
+                    "continue-live",
+                    "--parent",
+                    str(parent_path),
+                    "--parent-sha256",
+                    parent_sha256,
+                    "--no-resource-adjustment",
+                    "--max-calls",
+                    "0",
+                    "--output",
+                    str(output),
+                ),
+                check=False,
+                capture_output=True,
+                env=environment,
+                text=True,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("requires at least 4 model calls", completed.stderr)
+            self.assertNotIn("transition_reason", completed.stderr)
+            self.assertFalse(output.exists())
+
     def test_live_host_rejects_noncalibrated_population_before_transport(self) -> None:
         transport = FakeTransport([])
 
@@ -1852,7 +1952,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.1")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -2207,7 +2307,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.1")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

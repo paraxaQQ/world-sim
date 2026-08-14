@@ -21,7 +21,7 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 
-v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story.
+v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story. v0.13.1 lets a verified world continue naturally without forcing another resource intervention.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
@@ -155,7 +155,7 @@ free Zen model availability can change. check the [current OpenCode list](https:
 
 ## continue the same world
 
-`continue-live` does not recreate earlier days. it verifies the supplied artifact chain, restores the exact private state, preserves the public identities, and applies one logged between-session transition.
+`continue-live` does not recreate earlier days. it verifies the supplied artifact chain, restores the exact private state, and preserves the public identities. by default it applies one logged between-session resource transition. pass `--no-resource-adjustment` instead to carry the verified state forward unchanged; that mode rejects `--transition-id` and nonzero `--shared-wood-stock` values.
 
 `continue-live` defaults to the historical v2 contract and emits format v4 or v5 as its lineage requires. an explicitly selected `--interaction-protocol sequential-dialogue-v3` continuation emits format v6. continuations take their direct parent through `--parent`; earlier artifacts use repeatable `--ancestor` flags in oldest-to-newest order. each child stores only its direct parent link.
 

@@ -154,9 +154,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     continue_live.add_argument("--shared-wood-stock", type=int, default=0)
     continue_live.add_argument(
+        "--no-resource-adjustment",
+        action="store_true",
+        help="continue from the verified parent without changing shared resources",
+    )
+    continue_live.add_argument(
         "--transition-id",
-        required=True,
-        help="lowercase audit identifier for the between-cycle adjustment",
+        help=(
+            "required lowercase audit identifier unless "
+            "--no-resource-adjustment is used"
+        ),
     )
     continue_live.add_argument(
         "--max-calls", type=int, default=DEFAULT_LIVE_MAX_CALLS
@@ -394,6 +401,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shared_resource="wood",
                 shared_stock=args.shared_wood_stock,
                 transition_reason=args.transition_id,
+                preserve_shared_resources=args.no_resource_adjustment,
                 interaction_protocol=args.interaction_protocol,
                 initiative_phase=args.initiative_phase,
                 model_replacements=args.replace_model,

@@ -351,39 +351,48 @@ def _verify_continuation_artifact(
         artifact.get("transition_receipt"),
         name="transition_receipt",
     )
-    if transition_receipt.get("method") != (
+    if set(transition_receipt) != {"method", "event"}:
+        raise ValueError("transition receipt must contain exactly method and event")
+    transition_method = transition_receipt.get("method")
+    if transition_method == "verified_parent_state_preserved":
+        if transition_receipt.get("event") is not None:
+            raise ValueError("preserved-state transition receipt event must be null")
+    elif transition_method == (
         "deterministic_between_cycle_shared_resource_adjustment"
     ):
+        transition = _mapping(
+            transition_receipt.get("event"),
+            name="transition event",
+        )
+        transition_detail = _mapping(
+            transition.get("detail"),
+            name="transition event detail",
+        )
+        resource = transition_detail.get("resource")
+        stock = transition_detail.get("after")
+        reason = transition_detail.get("reason")
+        if not isinstance(resource, str):
+            raise ValueError("transition resource must be a string")
+        if isinstance(stock, bool) or not isinstance(stock, int):
+            raise ValueError("transition after stock must be an integer")
+        if not isinstance(reason, str):
+            raise ValueError("transition reason must be a string")
+        expected_transition = adjust_shared_resource(
+            expected_world,
+            resource=resource,
+            stock=stock,
+            reason=reason,
+        ).to_dict()
+        if not _reconstructed_equal(
+            dict(transition),
+            expected_transition,
+            strict_json_types=child_format == 6,
+        ):
+            raise ValueError(
+                "transition receipt does not match the reconstructed event"
+            )
+    else:
         raise ValueError("transition receipt method is invalid")
-    transition = _mapping(
-        transition_receipt.get("event"),
-        name="transition event",
-    )
-    transition_detail = _mapping(
-        transition.get("detail"),
-        name="transition event detail",
-    )
-    resource = transition_detail.get("resource")
-    stock = transition_detail.get("after")
-    reason = transition_detail.get("reason")
-    if not isinstance(resource, str):
-        raise ValueError("transition resource must be a string")
-    if isinstance(stock, bool) or not isinstance(stock, int):
-        raise ValueError("transition after stock must be an integer")
-    if not isinstance(reason, str):
-        raise ValueError("transition reason must be a string")
-    expected_transition = adjust_shared_resource(
-        expected_world,
-        resource=resource,
-        stock=stock,
-        reason=reason,
-    ).to_dict()
-    if not _reconstructed_equal(
-        dict(transition),
-        expected_transition,
-        strict_json_types=child_format == 6,
-    ):
-        raise ValueError("transition receipt does not match the reconstructed event")
 
     public_record = expected_world.prior_public_record
     if public_record is None:

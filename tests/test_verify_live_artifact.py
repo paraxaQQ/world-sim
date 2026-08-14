@@ -374,6 +374,7 @@ def _host_v6_artifact(
         "Cinder=opencode-paid/gpt-5.6-luna",
     ),
     initiative_phase: int = 0,
+    preserve_shared_resources: bool = False,
 ) -> dict[str, object]:
     return run_live_survival_continuation(
         parent_path=parent_path,
@@ -382,7 +383,8 @@ def _host_v6_artifact(
         additional_cycles=1,
         shared_resource="wood",
         shared_stock=0,
-        transition_reason="synthetic_host_v6",
+        transition_reason=(None if preserve_shared_resources else "synthetic_host_v6"),
+        preserve_shared_resources=preserve_shared_resources,
         interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
         initiative_phase=initiative_phase,
         model_replacements=model_replacements,
@@ -1168,6 +1170,38 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                 VERIFIER.verify_live_artifact(
                     child_path,
                     parent_path=parent,
+                )
+
+    def test_continuation_verifies_preserved_parent_state_and_rejects_an_event(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child_path = root / "preserved-v6.json"
+            child = _host_v6_artifact(
+                transport=_HostFixtureTransport(fail_at=None),
+                preserve_shared_resources=True,
+            )
+            _write_artifact(child_path, child)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child_path,
+                parent_path=SESSION_2_ARTIFACT,
+                ancestor_paths=(SESSION_1_ARTIFACT,),
+            )
+            self.assertTrue(receipt["exact_replay"])
+            self.assertEqual(
+                child["transition_receipt"],
+                {"method": "verified_parent_state_preserved", "event": None},
+            )
+
+            child["transition_receipt"]["event"] = {}
+            _write_artifact(child_path, child)
+            with self.assertRaisesRegex(ValueError, "event must be null"):
+                VERIFIER.verify_live_artifact(
+                    child_path,
+                    parent_path=SESSION_2_ARTIFACT,
+                    ancestor_paths=(SESSION_1_ARTIFACT,),
                 )
 
     def test_continuation_rejects_a_tampered_public_record(self) -> None:
