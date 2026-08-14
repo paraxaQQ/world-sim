@@ -36,6 +36,10 @@ BEHAVIOR_FIELDS = (
     "deaths",
     "death_events",
 )
+MANIFEST_V2_STOPPING_RULE = (
+    "run all 12 planned cells; retain and censor isolated cell failures; stop only "
+    "when a credential, aggregate-budget, or batch-wide transport gate closes"
+)
 
 
 def _load_verifier() -> ModuleType:
@@ -167,6 +171,8 @@ def _protocol_receipt(
         name="manifest.preregistration",
     )
     stopping_rule = preregistration.get("stopping_rule")
+    if manifest.get("format_version") == 2:
+        return _protocol_receipt_v2(stopping_rule, rows)
     if stopping_rule != (
         "run all 12 planned cells unless a technical or aggregate-budget gate stops "
         "the batch"
@@ -204,11 +210,44 @@ def _protocol_receipt(
     }
 
 
+def _protocol_receipt_v2(
+    stopping_rule: object,
+    rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    if stopping_rule != MANIFEST_V2_STOPPING_RULE:
+        raise ValueError("manifest stopping rule is not the frozen format-v2 rule")
+    failed_positions = [
+        int(row["execution_position"])
+        for row in rows
+        if row["status"] == "failed"
+    ]
+    incomplete = any(row["status"] == "pending" for row in rows)
+    for row in rows:
+        row["analysis_set"] = (
+            "not_executed" if row["status"] == "pending" else "preregistered"
+        )
+    return {
+        "stopping_rule": stopping_rule,
+        "status": "incomplete" if incomplete else "adhered",
+        "first_technical_failure_execution_position": min(
+            failed_positions,
+            default=None,
+        ),
+        "observed_post_stop_execution_positions": [],
+        "post_stop_use": None,
+        "reported_aggregate_use": "all_retained_cells_descriptive",
+    }
+
+
 def _validate_manifest(
     manifest: Mapping[str, object],
 ) -> tuple[list[Mapping[str, object]], Mapping[str, object]]:
-    if manifest.get("format_version") != 1:
-        raise ValueError("manifest format_version must be 1")
+    format_version = _strict_int(
+        manifest.get("format_version"),
+        name="manifest format_version",
+    )
+    if format_version not in {1, 2}:
+        raise ValueError("manifest format_version must be 1 or 2")
     if manifest.get("mode") != "turn_order_replicate_matrix":
         raise ValueError("manifest mode must be turn_order_replicate_matrix")
 

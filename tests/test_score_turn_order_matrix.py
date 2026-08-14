@@ -35,6 +35,10 @@ RETAINED_SCORE = (
     / "outputs"
     / "v0.14.0-session-005-turn-order-matrix-results.json"
 )
+V2_STOPPING_RULE = (
+    "run all 12 planned cells; retain and censor isolated cell failures; stop only "
+    "when a credential, aggregate-budget, or batch-wide transport gate closes"
+)
 
 SPEC = importlib.util.spec_from_file_location("score_turn_order_matrix", SCORER_PATH)
 if SPEC is None or SPEC.loader is None:
@@ -149,6 +153,74 @@ class TurnOrderMatrixScorerTests(unittest.TestCase):
 
         self.assertEqual(actual, expected)
 
+    def test_v2_isolated_failures_remain_preregistered_and_censored(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory)
+            manifest_path = _materialize_v2_matrix(repository_root)
+
+            report = SCORER.score_turn_order_matrix(
+                manifest_path,
+                repository_root=repository_root,
+            )
+
+        self.assertEqual(
+            report["protocol"],
+            {
+                "stopping_rule": V2_STOPPING_RULE,
+                "status": "adhered",
+                "first_technical_failure_execution_position": 6,
+                "observed_post_stop_execution_positions": [],
+                "post_stop_use": None,
+                "reported_aggregate_use": "all_retained_cells_descriptive",
+            },
+        )
+        self.assertTrue(
+            all(row["analysis_set"] == "preregistered" for row in report["raw_rows"])
+        )
+        failed_rows = [row for row in report["raw_rows"] if row["status"] == "failed"]
+        self.assertEqual(len(failed_rows), 4)
+        self.assertTrue(all(row["censored"] for row in failed_rows))
+        self.assertTrue(all(not row["scoreable"] for row in failed_rows))
+
+    def test_v2_pending_cell_is_not_executed_and_protocol_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory)
+            manifest_path = _materialize_v2_matrix(repository_root)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            pending_output = Path(manifest["cells"][-1]["output"])
+            (repository_root / pending_output).unlink()
+
+            report = SCORER.score_turn_order_matrix(
+                manifest_path,
+                repository_root=repository_root,
+            )
+
+        self.assertEqual(report["protocol"]["status"], "incomplete")
+        self.assertEqual(
+            report["protocol"]["observed_post_stop_execution_positions"],
+            [],
+        )
+        self.assertIsNone(report["protocol"]["post_stop_use"])
+        pending_rows = [row for row in report["raw_rows"] if row["status"] == "pending"]
+        self.assertEqual(len(pending_rows), 1)
+        self.assertEqual(pending_rows[0]["analysis_set"], "not_executed")
+        self.assertTrue(
+            all(
+                row["analysis_set"] == "preregistered"
+                for row in report["raw_rows"]
+                if row["status"] != "pending"
+            )
+        )
+
+    def test_v2_stopping_rule_is_exact(self) -> None:
+        manifest = {
+            "format_version": 2,
+            "preregistration": {"stopping_rule": f"{V2_STOPPING_RULE}."},
+        }
+
+        with self.assertRaisesRegex(ValueError, "frozen format-v2 rule"):
+            SCORER._protocol_receipt(manifest, [])
+
     def test_completed_behavior_is_recomputed_instead_of_trusted(self) -> None:
         artifact = json.loads(COMPLETED_CELL.read_text(encoding="utf-8"))
         artifact["session_outcomes"][
@@ -215,6 +287,25 @@ class TurnOrderMatrixScorerTests(unittest.TestCase):
         self.assertFalse(batch["terminal"])
         self.assertIsNone(batch["max_minus_min_phase_rate"])
         self.assertTrue(all(phase["pending_n"] == 1 for phase in phases))
+
+
+def _materialize_v2_matrix(repository_root: Path) -> Path:
+    for session in (1, 2, 5):
+        materialize_session_catalog(
+            REPOSITORY_ROOT / "outputs" / f"session-{session:03d}.json",
+            repository_root,
+        )
+    manifest_path = (
+        repository_root / MANIFEST_PATH.relative_to(RETAINED_REPOSITORY_ROOT)
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["format_version"] = 2
+    manifest["preregistration"]["stopping_rule"] = V2_STOPPING_RULE
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return manifest_path
 
 
 if __name__ == "__main__":
