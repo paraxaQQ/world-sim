@@ -8,7 +8,8 @@ outputs/v0.12.0-sequential-dialogue-v3-confirmation.json -text
 outputs/v0.12.0-gpt-5.6-luna-qualification.json -text
 outputs/v0.12.1-gpt-5.6-luna-qualification.json -text
 outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json -text
-outputs/v0.13.0-session-005-turn-order-b01-p0-29993.json -text
+outputs/v0.13.0-session-005-turn-order-*.json -text
+outputs/v0.14.0-session-005-turn-order-matrix-results.json -text
 outputs/v0.13.1-session-004b-doomed-continuation-29993.json -text
 outputs/v0.13.1-session-004b-doomed-continuation-29993-postmortem.json -text
 src/world_sim/cli.py text eol=lf

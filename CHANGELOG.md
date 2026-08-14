@@ -1,5 +1,13 @@
 # changelog
 
+## 0.14.0 - 2026-08-14
+
+- add an offline turn-order scorer that verifies every retained cell, recomputes objective outcomes, and censors failed partial worlds
+- retain all twelve session-5 cells: eight completed, four technical censors, and five shelter-chain successes across the eight scoreable cells
+- record the position-6 stop-rule deviation and keep positions 7 through 12 exploratory-only
+- derive failed-call exposure from each recorded authorized request bound without changing historical artifact schemas
+- correct the session-5 ledger to distinguish observed cost from conservative exposure
+
 ## 0.13.2 - 2026-08-13
 
 - let the postmortem lineage validator reconstruct a preserved-state continuation boundary before issuing any reflection call

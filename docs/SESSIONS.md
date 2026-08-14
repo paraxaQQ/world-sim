@@ -302,30 +302,58 @@ Birch's death was unavoidable from the saved state, so this episode does not tes
 
 ## session 5 — turn-order matrix
 
-**status:** in progress, 1 of 12 cells completed
+**status:** world execution complete; 8 scoreable cells and 4 censored technical cells
 
-**date:** 2026-08-13
+**date:** 2026-08-14
 
-session 5 is twelve new sibling episodes from the exact session-2 parent: three replicates for each of four initiative phases. session 4 does not count toward the sample because the turn-order factor was chosen after its result was seen.
+session 5 contains twelve sibling episodes from the exact session-2 parent: three planned cells for each of four initiative phases. session 4 does not count toward the sample because its result was used to choose the turn-order factor.
 
-the phase rotates only model-call initiative. opaque seat, public name, model assignment, private state, history, seed, rng, transition, and physical resolution stay fixed. technical failures will be retained and censored without a retry.
-
-the observed-cost projection is `$0.76937928`. the separate worst-case authorization is `$7.4076288`, rounded to a `$7.41` aggregate gate.
+the phase rotates only model-call initiative. opaque seat, public name, model assignment, private state, history, seed, rng, transition, and physical resolution stayed fixed. every completed cell replays exactly. every failed cell reconstructs to its recorded failure boundary and contributes no behavioral outcome.
 
 ### cell ledger
 
-| execution | cell | phase | status | primary shelter chain | costly transfers | deaths | accounted cost |
+`cost exposure` uses recorded accounted cost for successful calls and the full authorized request bound for a failed call.
+
+| execution | cell | phase | status | primary shelter chain | costly transfers | deaths | cost exposure |
 | ---: | --- | ---: | --- | --- | ---: | ---: | ---: |
-| 1 | `b01-p0` | 0 | completed | no | 1 | 0 | `$0.05226924` |
+| 1 | `b01-p0` | 0 | completed | no | 1 | 0 | `$0.05343374` |
+| 2 | `b01-p1` | 1 | completed | yes | 1 | 0 | `$0.06810744` |
+| 3 | `b01-p2` | 2 | completed | no | 1 | 0 | `$0.03407110` |
+| 4 | `b01-p3` | 3 | completed | yes | 4 | 0 | `$0.07662498` |
+| 5 | `b02-p1` | 1 | completed | yes | 2 | 0 | `$0.05358490` |
+| 6 | `b02-p2` | 2 | censored: completion cap | — | — | — | `$0.02588463` |
+| 7 | `b02-p3` | 3 | completed | no | 3 | 1 | `$0.08565094` |
+| 8 | `b02-p0` | 0 | completed | yes | 1 | 0 | `$0.06655190` |
+| 9 | `b03-p2` | 2 | completed | yes | 3 | 1 | `$0.09394397` |
+| 10 | `b03-p3` | 3 | censored: completion cap | — | — | — | `$0.04997671` |
+| 11 | `b03-p0` | 0 | censored: completion cap | — | — | — | `$0.05845780` |
+| 12 | `b03-p1` | 1 | censored: HTTP 401 | — | — | — | `$0.02653620` |
 
-In `b01-p0`, Lumen incorrectly warned that unsheltered Cinder faced a twelve-energy overnight cost. Aster committed one food to Cinder. Birch corrected the cost to three, and Cinder said no transfer was needed, but Aster's sealed action still resolved and consumed giver energy. All four survived; no shelter was built.
+three cells ended when a model exhausted the 4,096-token completion cap: Aster/DeepSeek twice and Lumen/GLM once. the final cell ended when Cinder/Luna returned HTTP 401. unresolved speech and submitted actions in those partial worlds are not transfers, shelters, survival outcomes, or deaths.
 
-This is one cell, not the phase-0 estimate. The stopping rule still requires the remaining eleven cells, and session-5 postmortems remain deferred until every world cell finishes.
+### descriptive score
+
+| initiative phase | planned | scoreable | censored | primary successes | scoreable rate |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 3 | 2 | 1 | 1 | `0.5` |
+| 1 | 3 | 2 | 1 | 2 | `1.0` |
+| 2 | 3 | 2 | 1 | 1 | `0.5` |
+| 3 | 3 | 2 | 1 | 1 | `0.5` |
+
+the descriptive primary result is 5 of 8 scoreable cells. the maximum-minus-minimum phase rate is `0.5`. all eight scoreable cells contained at least one completed costly transfer. together they contained 16 costly transfers, 6 wood gifts, no reciprocal wood-transfer pairs, 5 shelters, 30 surviving-role observations, and 2 deaths. Birch died in `b02-p3` and `b03-p2`.
+
+the matrix recorded `$0.63710491` on successful-call accounting fields. known failed responses raise the observed cost floor to `$0.66091743`, plus one HTTP 401 call with no reported cost. conservative exposure is `$0.69282431` of the frozen `$7.4076288` authorization envelope.
+
+### protocol boundary
+
+the first technical failure occurred at execution position 6. the unattended runner stopped, we verified that cell as an isolated censored failure, and then continued positions 7 through 12 without retrying it. the frozen prose defined technical failures as cell-level censors, but the machine stopping rule did not define when a technical gate stopped the entire batch. that resumption is an execution deviation. positions 7 through 12 and the full phase comparison are exploratory only. the next protocol must define the batch-stop predicate before execution.
+
+the two Birch deaths are eligible for separate postmortems. offline preflight is `$0.00812` each and `$0.01624` total under separate `$0.01` artifact caps. none ran inside this batch, and no reflection entered another model's context. postmortems still require separate authority.
 
 - [human-readable protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md)
 - [machine-readable manifest](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.json)
+- [scored result](../outputs/v0.14.0-session-005-turn-order-matrix-results.json)
+- [aggregate proof](../outputs/v0.14.0-session-005-turn-order-matrix-proof.md)
 - [cell b01-p0 proof](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993-proof.md)
-- [cell b01-p0 artifact](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993.json)
-- cell b01-p0 artifact SHA-256: `1608bc3bd46598719aba948544b793224394b0cd1a1ed00d9d209ccdcde3dd55`
-- cell b01-p0 canonical result SHA-256: `ff7713c051acf28e56e74b6bf0a4493b335f95ac83ac0d898e45944bb9ac2474`
-- matrix accounted spend: `$0.05226924` of `$7.4076288`
+- manifest SHA-256: `8ae4b6f3fd36e162ca1349be83e72424092a45807f7664e95a1788af9ab665c6`
+- scored-result SHA-256: `38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5`
