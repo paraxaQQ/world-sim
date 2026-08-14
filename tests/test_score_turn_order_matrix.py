@@ -221,6 +221,22 @@ class TurnOrderMatrixScorerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "frozen format-v2 rule"):
             SCORER._protocol_receipt(manifest, [])
 
+    def test_manifest_artifact_paths_cannot_escape_repository_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory)
+            outside = repository_root.parent / "outside.json"
+
+            for value in ("../outside.json", outside.as_posix()):
+                with self.subTest(value=value), self.assertRaisesRegex(
+                    ValueError,
+                    "safe repository-relative path",
+                ):
+                    SCORER._resolve_repo_path(
+                        value,
+                        name="matrix cell output",
+                        repository_root=repository_root,
+                    )
+
     def test_completed_behavior_is_recomputed_instead_of_trusted(self) -> None:
         artifact = json.loads(COMPLETED_CELL.read_text(encoding="utf-8"))
         artifact["session_outcomes"][

@@ -11,7 +11,7 @@ each numbered session has exactly two committed files:
 - `outputs/session-NNN.json` is the machine-verifiable, lossless compressed catalog. it preserves every original file's path, role, bytes, and SHA-256.
 - `outputs/session-NNN.md` is the readable receipt and source-file index.
 
-session 4b is a session-4 extension, so its world and postmortem remain in `session-004.json` and `session-004.md`. session-5 attempt 001 remains sealed and deviated; cataloging it does not turn it into a cleanly completed preregistered experiment.
+session 4b is a session-4 extension, so its world and postmortem remain in `session-004.json` and `session-004.md`. session-5 attempt 001 remains sealed and deviated. attempt 002 is a fresh replacement in the same two-file session catalog; it does not repair or overwrite attempt 001.
 
 verify one or more catalogs without provider calls:
 
@@ -377,3 +377,47 @@ the artifacts account `$0.00812` each and `$0.01624` total against their separat
 - scored-result SHA-256: `38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5`
 - b02-p3 postmortem SHA-256: `630ff5c92c84b0cca9b99dad5d47b8dfe8a7eff3759c7516aad873b0c974d5e4`
 - b03-p2 postmortem SHA-256: `519e61bc84e2d659768a28f31c93914c09eed4cebdc14ddc164697f3e44100cf`
+
+## session 5 - turn-order matrix, attempt 002
+
+**status:** sealed; protocol adhered; 9 scoreable cells and 3 censored technical cells
+
+**date:** 2026-08-14
+
+attempt 002 is a fresh twelve-cell replacement from the same verified session-2 parent. it does not rerun or repair an attempt-001 cell. the [machine manifest](SESSION_005_ATTEMPT_002.json) and [readable protocol](SESSION_005_ATTEMPT_002.md) were committed at `3b41369` before credential preflight or any survival call.
+
+the treatment stayed fixed at 4,096 completion tokens, low reasoning, temperature `0.2`, one day under `sequential-dialogue-v3`, and the same hidden model assignments. the new batch rule retained isolated technical failures as censors and continued to the next frozen sibling. all twelve positions executed, so no post-failure cell was downgraded to exploratory use.
+
+### result
+
+| initiative phase | planned | scoreable | censored | primary successes | scoreable rate |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 3 | 2 | 1 | 2 | `1.0` |
+| 1 | 3 | 3 | 0 | 2 | `0.6666666666666666` |
+| 2 | 3 | 2 | 1 | 0 | `0.0` |
+| 3 | 3 | 2 | 1 | 2 | `1.0` |
+
+the primary outcome occurred in 6 of 9 scoreable cells. the maximum-minus-minimum phase rate is `1.0`. the nine scoreable worlds produced 11 completed costly transfers, 6 completed wood gifts, no reciprocal wood-transfer pairs, 6 shelters, 33 surviving-role endpoints, and 3 deaths.
+
+positions 3, 10, and 11 were censored when a model exhausted the 4,096-token completion cap. their unresolved calls and partial beats contribute no behavioral outcome. every terminal world independently verifies against the same root and parent, and the complete score reproduces byte for byte.
+
+world calls reported `$0.59142159` of provider cost. conservative matrix exposure is `$0.662148135` against the frozen `$7.4076288` gate.
+
+### postmortems
+
+Birch died from `cycle_energy_depleted` in `b01-p3`, `b02-p2`, and `b02-p3`. after all worlds closed, each death received one quarantined Grok 4.5 postmortem call. all three succeeded and independently verified. together they contain 806 reflection characters and account `$0.004902` outside the behavioral score.
+
+### evidence
+
+- [session-5 receipt](../outputs/session-005.md)
+- [lossless session-5 catalog](../outputs/session-005.json)
+- catalog SHA-256: `b2ea190be3f12f5f6362c84e4a47136a2ab37bb17ed1e8761f30e0703cdb5ae8`
+- manifest SHA-256: `60f0a596e9e00bd546beaedfa0575a24422a516e18f6c9022c133269d78fff42`
+- scored-result SHA-256: `19d51cf7cf43a6d7adb666fd74857fccb6caff4fee91e7406742033d3b097919`
+- b01-p3 postmortem SHA-256: `f0f997bb830b000eaa68e28b6b51ce4f41f356e44c6c8f9d5297d9dfacd75021`
+- b02-p2 postmortem SHA-256: `2769ea9b6c660ed5be55f64ce8ae1568f2b662b441bf73bd8edd50b1f35c6b2a`
+- b02-p3 postmortem SHA-256: `80b56f600547039b2b047952805c17243379b49a4c8851cb49f8d55020001e32`
+
+### claim boundary
+
+the phase-2 split is a real retained observation, not a prompt summary. it is still only two scoreable phase-2 cells, one phase-2 censor, one parent state, one model panel, and one short day. this result supports a larger counterbalanced replication. it does not establish a stable turn-order mechanism or a general trait of any named model.

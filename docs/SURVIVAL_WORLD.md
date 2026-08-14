@@ -151,7 +151,7 @@ V6 permits at most one model assignment replacement per continuation. A replacem
 
 committed campaign evidence uses exactly two files per numbered session. `outputs/session-NNN.json` is a lossless compressed catalog of the original source files, paths, roles, bytes, and hashes. `outputs/session-NNN.md` is its readable receipt and source-file index.
 
-session 4b is an extension inside the session-4 catalog, not a separately numbered session. session-5 attempt 001 is sealed and deviated, not cleanly complete; moving its retained files into a catalog does not change that scientific status.
+session 4b is an extension inside the session-4 catalog, not a separately numbered session. session-5 attempt 001 remains sealed and deviated. attempt 002 is a separate direct attempt in the same catalog and does not rewrite attempt 001.
 
 verify a catalog without provider calls:
 
@@ -159,9 +159,9 @@ verify a catalog without provider calls:
 py -3.11 tools\session_catalog.py verify outputs\session-005.json
 ```
 
-catalog verification proves the package inventory, pinned Git provenance, gzip envelope, bytes, and hashes. it does not rerun the separate world, replay, postmortem, or scoring verifiers. materialize the target catalog and the ancestor catalogs named in its receipt before running those checks.
+catalog verification proves the package inventory, gzip envelope, bytes, hashes, and each attempt's declared provenance. migrated attempts are checked against their pinned Git commit. direct attempts carry no fake Git provenance. catalog verification does not replace the separate world, replay, postmortem, or scoring verifiers.
 
-the current catalog builder is frozen to the one-time sessions-1-through-5 migration. later live sessions must emit their two canonical files directly.
+the catalog builder is frozen to the one-time migration. the direct matrix appender requires twelve terminal cells, an adhered deterministic score, one proof, and any supplied linked postmortems before it atomically replaces the canonical JSON/Markdown pair.
 
 ## calibration boundary
 

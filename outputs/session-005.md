@@ -1,6 +1,6 @@
-# session 005 - turn-order matrix, attempt 001
+# session 005 - turn-order matrix
 
-**status:** sealed and deviated; not cleanly complete
+**attempt 001 status:** sealed and deviated; not cleanly complete
 
 **date:** 2026-08-14
 
@@ -16,7 +16,7 @@ the first technical failure occurred at execution position 6. the runner stopped
 - source commit: `03c04a389a1b3b06edc46a9d0492ee1c0b9e38ba`
 - preserved source artifacts: `20`
 - preserved source bytes: `3687963`
-- catalog SHA-256: `eb3d70e572ae57b8d85beb3cd5c0209326c29676252b25b5a5e738af0ca4f99b`
+- sealed attempt-001 v1 catalog SHA-256: `eb3d70e572ae57b8d85beb3cd5c0209326c29676252b25b5a5e738af0ca4f99b`
 - matrix manifest SHA-256: `8ae4b6f3fd36e162ca1349be83e72424092a45807f7664e95a1788af9ab665c6`
 - scored result SHA-256: `38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5`
 - b02-p3 postmortem SHA-256: `630ff5c92c84b0cca9b99dad5d47b8dfe8a7eff3759c7516aad873b0c974d5e4`
@@ -67,3 +67,45 @@ the materialization command restores sessions 1 and 2 because matrix scoring ver
 ## claim boundary
 
 the descriptive primary result is 5 of 8 scoreable cells, with rates of `0.5`, `1.0`, `0.5`, and `0.5` across phases 0 through 3. this is not clean causal evidence of a turn-order effect. a fresh replacement matrix needs a frozen continue-and-censor failure rule and twelve new sibling cells.
+
+## attempt 002 - replacement matrix
+
+**status:** sealed; protocol adhered
+
+attempt 002 executed all 12 frozen sibling cells. 9 cells are scoreable, 3 are censored technical failures, and 6 scoreable cells completed the primary shelter-enabling chain. phase success rates are `[1.0, 0.6666666666666666, 0.0, 1.0]`.
+
+## attempt 002 evidence identity
+
+- catalog SHA-256: `b2ea190be3f12f5f6362c84e4a47136a2ab37bb17ed1e8761f30e0703cdb5ae8`
+- embedded artifacts: `18`
+- matrix manifest SHA-256: `60f0a596e9e00bd546beaedfa0575a24422a516e18f6c9022c133269d78fff42`
+- scored result SHA-256: `19d51cf7cf43a6d7adb666fd74857fccb6caff4fee91e7406742033d3b097919`
+- readable proof SHA-256: `e7b5c2335dfc4327f82d0bde9ca0f48edda8e768fd06350e04d8f2036ca18450`
+- postmortem artifacts: `3`
+- conservative cost exposure: `$0.662148135`
+
+the attempt was packaged directly from ignored `artifacts/` files into this JSON/Markdown pair. no split attempt artifact is committed, and direct artifacts claim no Git source commit.
+
+## restore and rescore attempt 002
+
+attempt 002's manifest keeps the lineage layout used during execution. restore session 5 at the working root, then restore sessions 1 and 2 inside that lineage directory:
+
+```powershell
+$restore = "artifacts\session-005-restored"
+
+py -3.11 tools\session_catalog.py materialize `
+  outputs\session-005.json `
+  --destination $restore
+
+py -3.11 tools\session_catalog.py materialize `
+  outputs\session-001.json `
+  outputs\session-002.json `
+  --destination "$restore\artifacts\session-005-attempt-002\lineage"
+
+py -3.11 tools\score_turn_order_matrix.py `
+  "$restore\docs\SESSION_005_ATTEMPT_002.json" `
+  --repo-root $restore `
+  --output "$restore\artifacts\session-005-attempt-002\score-replay.json"
+```
+
+the replay output must have SHA-256 `19d51cf7cf43a6d7adb666fd74857fccb6caff4fee91e7406742033d3b097919`.

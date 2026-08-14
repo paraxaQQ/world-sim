@@ -22,8 +22,9 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 - **session 4b:** this session-4 extension continued the exact session-4 world without another resource intervention. Lumen built the first shelter; Birch recognized an unavoidable one-energy trap, waited through the day, and died during upkeep.
 - **session 5, attempt 001:** all twelve sibling cells are retained. eight completed and four were censored by technical failures. every completed cell contained a costly transfer, and five completed the shelter-enabling chain. its two separate postmortem attempts both received HTTP 401, so they produced no reflections and were not retried.
+- **session 5, attempt 002:** the fresh replacement obeyed its precommitted continue-and-censor rule. nine cells were scoreable, three hit the 4,096-token completion cap, and six scoreable cells completed the shelter-enabling chain. three linked Birch postmortems succeeded after every world closed.
 
-v0.15.0 keeps session-5 attempt 001 sealed without changing its score and replaces the split campaign evidence with five lossless session catalogs. attempt 001 is deviated and not a cleanly completed preregistered experiment. the two death notices are retained as verified failure artifacts outside the world, and their authorization accounting is not presented as provider spend.
+v0.16.0 keeps attempt 001 sealed and adds attempt 002 without rewriting it. the replacement produced phase rates of `1.0`, `0.6666666666666666`, `0.0`, and `1.0`, with one censor in phases 0, 2, and 3. that full observed range is worth replicating, but `n = 3` per phase and three censors are nowhere near a general turn-order claim.
 
 committed campaign outputs use exactly two files per numbered session. `outputs/session-NNN.json` is the lossless compressed catalog: it preserves the original files, paths, bytes, roles, and hashes. `outputs/session-NNN.md` is the readable receipt. session 4b and its postmortem remain inside session 4 as an extension rather than becoming a sixth session.
 
@@ -39,9 +40,9 @@ the reachability proof and full control artifact in the [session-4 receipt](outp
 
 session 4b then continued the exact session-4 state without changing shared resources. Birch's death and Lumen's shelter both replay exactly; Birch's separate postmortem response cannot enter the world. the [session-4 receipt](outputs/session-004.md) records this extension's world and postmortem boundaries.
 
-session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [session-5 receipt](outputs/session-005.md) and [lossless catalog](outputs/session-005.json) retain attempt 001's frozen protocol, raw rows, hashes, costs, score, deviation, and postmortem seal.
+session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [session-5 receipt](outputs/session-005.md) and [lossless catalog](outputs/session-005.json) retain both attempts, their frozen manifests, all terminal worlds, deterministic scores, costs, protocol status, and causally separate postmortems.
 
-the descriptive scoreable rates were `0.5`, `1.0`, `0.5`, and `0.5` across phases 0 through 3, with two scoreable cells per phase. do not read that as a clean turn-order effect. the first technical failure occurred at execution position 6; positions 7 through 12 continued after review even though the frozen batch-stop wording did not define that resumption. those later cells and the full phase comparison are exploratory only.
+attempt 001's descriptive rates were `0.5`, `1.0`, `0.5`, and `0.5`. its first technical failure occurred at execution position 6, and later cells continued without a preregistered resume clause. attempt 002 fixed that rule before its first survival call: isolated technical failures were censored without stopping later siblings. all twelve cells executed, the protocol adhered, and the phase rates were `1.0`, `0.6666666666666666`, `0.0`, and `1.0`. phase 2 has only two scoreable cells, so this is a replication target, not a conclusion.
 
 ## what the models see
 
@@ -182,9 +183,9 @@ py -3.11 tools\session_catalog.py verify `
 
 the catalog verifier checks the frozen inventory, gzip envelope, original paths, bytes, roles, SHA-256 values, and pinned Git blobs. it does not rerun the domain-specific world, replay, or scoring verifiers. `tools/session_catalog.py materialize` restores the requested catalogs; continuation and matrix checks also need the ancestor catalogs listed in each session receipt.
 
-source verification and materialization require commit `03c04a389a1b3b06edc46a9d0492ee1c0b9e38ba`. a depth-1 checkout must fetch that history first.
+source verification for sessions 1 through 4 and session-5 attempt 001 requires commit `03c04a389a1b3b06edc46a9d0492ee1c0b9e38ba`. a depth-1 checkout must fetch that history first. later direct attempts carry their own exact payloads and hashes without claiming a fake source commit.
 
-the current `build` subcommand is deliberately frozen to the one-time sessions-1-through-5 migration. it is not the writer for later live sessions. the next live runner must emit its canonical JSON/Markdown pair directly instead of reviving split committed outputs.
+the `build` subcommand remains frozen to the one-time migration. `append-matrix-attempt` verifies a complete direct matrix, recomputes its score, checks optional postmortems, and appends it atomically to the canonical session-5 JSON/Markdown pair. split live artifacts stay ignored and are never revived as committed outputs.
 
 session 3 is a historical format-v5 artifact. it failed before its first beat resolved, so its retained live-artifact verification checks the exact partial state and failed-call receipt instead of inventing a completed result.
 

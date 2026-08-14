@@ -8,7 +8,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import ModuleType
 from typing import Any
 
@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         help="also write the deterministic JSON report to this path",
+    )
+    parser.add_argument(
+        "--repo-root",
+        type=Path,
+        default=REPOSITORY_ROOT,
+        help="root used to resolve manifest artifact paths",
     )
     return parser
 
@@ -741,8 +747,23 @@ def _resolve_repo_path(
     repository_root: Path,
 ) -> Path:
     text = _text(value, name=name)
-    path = Path(text)
-    return path.resolve() if path.is_absolute() else (repository_root / path).resolve()
+    if "\\" in text:
+        raise ValueError(f"{name} must be a safe repository-relative path")
+    relative = PurePosixPath(text)
+    if (
+        relative.is_absolute()
+        or relative.as_posix() != text
+        or not relative.parts
+        or any(part in {"", ".", ".."} or ":" in part for part in relative.parts)
+    ):
+        raise ValueError(f"{name} must be a safe repository-relative path")
+    root = repository_root.resolve()
+    candidate = root.joinpath(*relative.parts).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"{name} escapes repository root") from error
+    return candidate
 
 
 def _display_path(path: Path, *, repository_root: Path) -> str:
@@ -825,7 +846,10 @@ def _decimal_text(value: Decimal) -> str:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    report = score_turn_order_matrix(args.manifest)
+    report = score_turn_order_matrix(
+        args.manifest,
+        repository_root=args.repo_root,
+    )
     rendered = json.dumps(
         report,
         ensure_ascii=False,

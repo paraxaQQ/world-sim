@@ -1,5 +1,13 @@
 # changelog
 
+## 0.16.0 - 2026-08-14
+
+- precommit a fresh twelve-cell session-5 replacement with an explicit continue-and-censor rule and objective batch-stop predicates
+- retain nine scoreable cells, three completion-budget censors, six shelter-enabling aid chains, eleven costly transfers, six shelters, and three deaths
+- report scoreable phase rates of `1.0`, `0.6666666666666666`, `0.0`, and `1.0` without promoting the small censor-heavy matrix into a general turn-order claim
+- retain and independently verify three causally separate Birch postmortems after every world closed
+- add format-v2 direct session attempts and an atomic append command while preserving attempt 001 byte for byte with its real Git provenance
+
 ## 0.15.0 - 2026-08-14
 
 - replace 73 split output files with one lossless machine bundle and one readable receipt for each of sessions 1 through 5

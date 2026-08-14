@@ -3,22 +3,27 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
+from unittest.mock import patch
 
 from world_sim.session_catalog import (
     MAX_RAW_ARTIFACT_BYTES,
     SESSION_ARTIFACTS,
     SESSION_SOURCE_COMMITS,
+    append_direct_matrix_attempt,
     audit_source_mapping,
+    build_artifact_record,
     build_session_catalog,
     load_session_catalog,
     materialize_session_catalog,
     parse_session_catalog,
     render_session_catalog,
+    replace_session_pair,
     verify_catalog_source_blobs,
     verify_session_catalog,
     write_session_catalog,
@@ -30,7 +35,6 @@ EXPECTED_CATALOG_SHA256 = {
     2: "bc6af110c0970da37825db830ad05e90a03bd20bc6ead76f0c78d7eef85cedb9",
     3: "f94b8c44029e360814ce8f9c20593588d17657bea1d741564d3dfd053943776e",
     4: "130af2a86af7f346d75b3ec04262a062ba5117200315a8329d07f25bbfab258c",
-    5: "eb3d70e572ae57b8d85beb3cd5c0209326c29676252b25b5a5e738af0ca4f99b",
 }
 
 
@@ -135,14 +139,20 @@ class SessionCatalogTests(unittest.TestCase):
 
         self.assertEqual([item.session for item in verified], [1, 2, 3, 4, 5])
         self.assertEqual(
-            [len(item.artifacts) for item in verified],
-            [27, 6, 5, 15, 20],
+            [len(item.artifacts) for item in verified[:4]],
+            [27, 6, 5, 15],
         )
-        for catalog in self.catalogs:
+        for catalog in self.catalogs[:4]:
             self.assertEqual(catalog["format_version"], 1)
             self.assertEqual(catalog["mode"], "campaign_session_catalog")
             self.assertEqual(catalog["payload_encoding"], "gzip+base64")
             self.assertEqual(catalog["gzip_mtime"], 0)
+        self.assertIn(verified[4].format_version, {1, 2})
+        if verified[4].format_version == 1:
+            self.assertEqual(len(verified[4].artifacts), 20)
+        else:
+            self.assertGreaterEqual(len(verified[4].attempts), 2)
+            self.assertEqual(len(verified[4].attempts[0].artifacts), 20)
 
     def test_source_verification_rejects_an_internally_consistent_wrong_blob(
         self,
@@ -296,6 +306,234 @@ class SessionCatalogTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "declares too many raw bytes"):
             verify_session_catalog(catalog)
+
+    def test_session_five_v2_wraps_attempt_one_byte_identically(self) -> None:
+        self.require_source_commit()
+        original = _attempt_one_v1_catalog(self.catalogs[4])
+        records = _direct_attempt_records()
+
+        updated = append_direct_matrix_attempt(
+            original,
+            attempt=2,
+            artifacts=records,
+        )
+        verified = verify_session_catalog(updated)
+
+        self.assertEqual(updated["format_version"], 2)
+        self.assertNotIn("source_commit", updated)
+        self.assertEqual(updated["attempts"][0]["artifacts"], original["artifacts"])
+        self.assertEqual(
+            updated["attempts"][0]["provenance"],
+            {
+                "kind": "git_commit",
+                "commit": SESSION_SOURCE_COMMITS[5],
+            },
+        )
+        self.assertEqual(updated["attempts"][1]["provenance"], {"kind": "direct"})
+        self.assertEqual(verified.format_version, 2)
+        self.assertEqual(len(verified.attempts), 2)
+        self.assertEqual(len(verified.attempts[0].artifacts), 20)
+        self.assertEqual(len(verified.attempts[1].artifacts), 15)
+        self.assertEqual(
+            verify_catalog_source_blobs(REPOSITORY_ROOT, updated),
+            verified,
+        )
+
+    def test_direct_attempt_rejects_duplicate_incomplete_and_tampered_data(self) -> None:
+        updated = append_direct_matrix_attempt(
+            _attempt_one_v1_catalog(self.catalogs[4]),
+            attempt=2,
+            artifacts=_direct_attempt_records(),
+        )
+        with self.assertRaisesRegex(ValueError, "already contains attempt"):
+            append_direct_matrix_attempt(
+                updated,
+                attempt=2,
+                artifacts=_direct_attempt_records(),
+            )
+
+        incomplete = _direct_attempt_records(pending=1)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            append_direct_matrix_attempt(
+                _attempt_one_v1_catalog(self.catalogs[4]),
+                attempt=2,
+                artifacts=incomplete,
+            )
+
+        tampered = deepcopy(updated)
+        tampered["attempts"][1]["artifacts"][1]["raw_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "SHA-256 does not match"):
+            verify_session_catalog(tampered)
+
+    def test_v2_materializes_both_attempts_and_pair_replacement_is_exact(self) -> None:
+        updated = append_direct_matrix_attempt(
+            _attempt_one_v1_catalog(self.catalogs[4]),
+            attempt=2,
+            artifacts=_direct_attempt_records(),
+        )
+        verified = verify_session_catalog(updated)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            destination = root / "restored"
+            written = materialize_session_catalog(updated, destination)
+            self.assertEqual(len(written), 35)
+            self.assertEqual(
+                len(tuple(destination.rglob("*.*"))),
+                35,
+            )
+
+            catalog_path = root / "session-005.json"
+            receipt_path = root / "session-005.md"
+            catalog_path.write_bytes(
+                (REPOSITORY_ROOT / "outputs" / "session-005.json").read_bytes()
+            )
+            receipt_path.write_bytes(b"# session 005\n")
+            receipt = b"# session 005\n\nsealed attempt 002\n"
+            catalog_sha256, receipt_sha256 = replace_session_pair(
+                updated,
+                catalog_path,
+                receipt,
+                receipt_path,
+            )
+            self.assertEqual(
+                hashlib.sha256(catalog_path.read_bytes()).hexdigest(),
+                catalog_sha256,
+            )
+            self.assertEqual(
+                hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
+                receipt_sha256,
+            )
+            self.assertEqual(load_session_catalog(catalog_path), verified)
+
+    def test_pair_replacement_rolls_back_if_the_second_replace_fails(self) -> None:
+        updated = append_direct_matrix_attempt(
+            _attempt_one_v1_catalog(self.catalogs[4]),
+            attempt=2,
+            artifacts=_direct_attempt_records(),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            catalog_path = root / "session-005.json"
+            receipt_path = root / "session-005.md"
+            original_catalog = b"original catalog\n"
+            original_receipt = b"# session 005\noriginal receipt\n"
+            catalog_path.write_bytes(original_catalog)
+            receipt_path.write_bytes(original_receipt)
+            real_replace = os.replace
+            calls = 0
+
+            def fail_second_replace(source: Path, destination: Path) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise OSError("simulated receipt replacement failure")
+                real_replace(source, destination)
+
+            with (
+                patch(
+                    "world_sim.session_catalog.os.replace",
+                    side_effect=fail_second_replace,
+                ),
+                self.assertRaisesRegex(OSError, "simulated receipt"),
+            ):
+                replace_session_pair(
+                    updated,
+                    catalog_path,
+                    b"# session 005\nnew receipt\n",
+                    receipt_path,
+                )
+
+            self.assertEqual(catalog_path.read_bytes(), original_catalog)
+            self.assertEqual(receipt_path.read_bytes(), original_receipt)
+
+
+def _attempt_one_v1_catalog(
+    catalog: dict[str, object],
+) -> dict[str, object]:
+    if catalog.get("format_version") == 1:
+        return deepcopy(catalog)
+    attempts = catalog.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        raise AssertionError("session 5 has no attempt 001")
+    attempt = attempts[0]
+    if not isinstance(attempt, dict):
+        raise AssertionError("session 5 attempt 001 is invalid")
+    provenance = attempt.get("provenance")
+    if not isinstance(provenance, dict):
+        raise AssertionError("session 5 attempt 001 provenance is invalid")
+    return {
+        "artifacts": deepcopy(attempt["artifacts"]),
+        "format_version": 1,
+        "gzip_mtime": 0,
+        "mode": "campaign_session_catalog",
+        "payload_encoding": "gzip+base64",
+        "session": 5,
+        "source_commit": provenance["commit"],
+    }
+
+
+def _direct_attempt_records(*, pending: int = 0) -> list[dict[str, object]]:
+    cells = [
+        {
+            "execution_position": position,
+            "output": (
+                "artifacts/session-005-attempt-002/worlds/"
+                f"attempt-002-b{((position - 1) // 4) + 1:02d}-p{(position - 1) % 4}-x.json"
+            ),
+        }
+        for position in range(1, 13)
+    ]
+    manifest_raw = (
+        json.dumps(
+            {
+                "attempt": 2,
+                "cells": cells,
+                "format_version": 2,
+                "mode": "turn_order_replicate_matrix",
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    manifest_path = "docs/SESSION_005_ATTEMPT_002.json"
+    result_raw = (
+        json.dumps(
+            {
+                "batch": {
+                    "pending_n": pending,
+                    "planned_n": 12,
+                    "terminal": pending == 0,
+                },
+                "manifest": {
+                    "artifact_sha256": hashlib.sha256(manifest_raw).hexdigest(),
+                    "path": manifest_path,
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    return [
+        build_artifact_record(manifest_path, "matrix_manifest", manifest_raw),
+        *[
+            build_artifact_record(cell["output"], "matrix_cell", b"{}\n")
+            for cell in cells
+        ],
+        build_artifact_record(
+            "artifacts/session-005-attempt-002/matrix-results.json",
+            "matrix_result",
+            result_raw,
+        ),
+        build_artifact_record(
+            "artifacts/session-005-attempt-002/matrix-proof.md",
+            "proof",
+            b"# proof\n",
+        ),
+    ]
 
 
 if __name__ == "__main__":
