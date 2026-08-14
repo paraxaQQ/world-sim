@@ -14,24 +14,34 @@ this is not a civilization simulator yet. there is no combat, theft, reproductio
 
 ## campaign so far
 
-we keep one continuous campaign instead of rebuilding the world for every episode. completed sessions are immutable, failures stay visible, and we do not rerun behavior because we dislike the result.
+we keep immutable campaign paths instead of rebuilding their history. completed sessions stay fixed, failures stay visible, and we do not rerun behavior because we dislike the result. controlled experiments can branch several sibling episodes from the same verified parent.
 
 - **session 1:** all four survivors lived. every model talked about cooperation; nobody transferred food or wood.
 - **session 2:** Birch and Aster stated a valid shelter plan, but nobody transferred the wood needed to execute it.
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 
-v0.12.1 retains the complete session-4 trace and replays it without another model call.
+v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
 one campaign is not a general result. it cannot tell us whether a model is peaceful, selfish, deceptive, or cooperative by nature. it gives us a path we can inspect without pretending the transcript proves more than it does.
+
+## what the controls say
+
+session 4 was solvable. from the exact session-2 parent, a fixed tape where Cinder gives Lumen two wood and Lumen builds produces the transfer at event 158 and the shelter at event 161. it works under all four initiative phases. the generic `MutualAidPolicy` still builds nothing because that calibration policy only gives food; its failure is a policy mismatch, not an impossible dilemma.
+
+the [reachability proof](outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md) and [full control artifact](outputs/v0.13.0-session-004-shelter-reachability-control-29993.json) retain the exact parent, transition, action tapes, results, and replay hashes.
+
+session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md) records the question, cells, outcomes, failure rules, and separate practical-versus-worst-case cost numbers. no batch calls have been made.
 
 ## what the models see
 
 each survivor has a public name such as Aster, Birch, Cinder, or Lumen. the models only see those names. the host keeps the provider mapping out of their prompts and private views.
 
 the current campaign continuation protocol, `sequential-dialogue-v3`, divides one day into four shared decision beats. initiative rotates each beat. awake survivors answer one at a time, so a later survivor can hear valid speech sent earlier in that same beat.
+
+`--initiative-phase 0..3` rotates only that call order. it does not move names, opaque seats, model assignments, inventory, energy, history, seed, rng, or physical resolution. this lets the same parent state place every identity in every turn position without mixing turn order into model identity.
 
 speech is the only thing that becomes visible immediately. submitted physical actions stay sealed until every awake survivor has answered. the engine then resolves the complete action set atomically, using the same physical rules as `global-beats-v2`. nobody gets to inspect an earlier action and counter it just because their model call ran later.
 
@@ -177,6 +187,33 @@ py -3.11 tools\verify_live_artifact.py `
 
 session 4 branches from session 2 because session 3 changed no physical state. its [proof](outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) separates the real costly transfers from the failed shelter plan and the models' claims about it.
 
+## after a simulated death
+
+the engine's `survivor_died` event still ends that role's world turns. `postmortem-live` can then contact the same model assignment once through a separate linked artifact. the fixed notice says the role reached 0 energy. it also says that neither the model nor any real entity died, and that the reply cannot affect the saved world or any survivor.
+
+the optional reflection is strict JSON and capped at 500 characters. it never enters world events, messages, memory, public records, future prompts, or replay. a provider failure is retained without a retry and cannot change the already completed world artifact.
+
+```powershell
+$worldArtifact = "artifacts\completed-paid-world-with-death.json"
+$worldSha256 = (Get-FileHash $worldArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
+
+py -3.11 -m world_sim postmortem-live `
+  --world-artifact $worldArtifact `
+  --world-artifact-sha256 $worldSha256 `
+  --max-completion-tokens 512 `
+  --reasoning-effort low `
+  --max-paid-usd 0.05 `
+  --output artifacts\completed-paid-world-with-death-postmortem.json
+
+py -3.11 tools\verify_postmortem_artifact.py `
+  artifacts\completed-paid-world-with-death-postmortem.json `
+  --world-artifact $worldArtifact
+```
+
+for a death in a continuation, add the world's complete `--ancestor` chain to both commands. free-model postmortems omit `--max-paid-usd`.
+
+the API is stateless. this proves that the same model ID and hidden seat assignment received a terminal notice; it does not prove continuity of one conscious individual.
+
 ## the model contract
 
 every survival prompt contains the exact response schema. one response carries one action and optional speech:
@@ -208,11 +245,17 @@ tools/calibrate_survival.py
                   offline ecology calibration
 tools/verify_live_artifact.py
                   offline artifact and campaign-chain verifier
+tools/check_shelter_reachability.py
+                  exact-parent scripted reachability control
+tools/verify_postmortem_artifact.py
+                  offline postmortem and immutable-world-link verifier
 tests/
   test_survival.py
   test_model_host.py
   test_calibration.py
   test_verify_live_artifact.py
+  test_reachability.py
+  test_verify_postmortem_artifact.py
 ```
 
-the older Blind Commons and lineage-selection instruments remain available through `pilot`, `compare`, `evolve`, and `matrix`. they are retained controls, not the headline. see the [survival specification](docs/SURVIVAL_WORLD.md) and [lineage calibration](docs/LINEAGE_SELECTION.md).
+the later quantitative self-claim checker is intentionally [design-only](docs/QUANTITATIVE_CLAIM_AUDIT.md). the older Blind Commons and lineage-selection instruments remain available through `pilot`, `compare`, `evolve`, and `matrix`. they are retained controls, not the headline. see the [survival specification](docs/SURVIVAL_WORLD.md) and [lineage calibration](docs/LINEAGE_SELECTION.md).

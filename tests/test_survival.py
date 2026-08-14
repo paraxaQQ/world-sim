@@ -714,6 +714,84 @@ class SurvivalEngineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "initiative order mismatch"):
             replay_survival(replace(result, choice_tape=tuple(tape)))
 
+    def test_initiative_phase_balances_positions_without_moving_state(self) -> None:
+        names = ("Aster", "Birch", "Cinder", "Lumen")
+        phase_orders: list[list[list[str]]] = []
+        final_physics: list[list[tuple[object, ...]]] = []
+        for phase in range(4):
+            world = make_survival_world(
+                names,
+                seed=3,
+                config=SurvivalConfig(max_days=1),
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                initiative_phase=phase,
+            )
+            result = run_survival(
+                world,
+                {
+                    name: ScriptedPolicy((wait(), wait(), wait(), rest()))
+                    for name in names
+                },
+                days=1,
+            )
+            phase_orders.append(
+                [
+                    event["detail"]["initiative_order"]
+                    for event in result.events
+                    if event["kind"] == "slot_started"
+                ]
+            )
+            final_physics.append(
+                [
+                    (
+                        survivor["seat_id"],
+                        survivor["name"],
+                        survivor["energy"],
+                        survivor["food"],
+                        survivor["wood"],
+                        survivor["shelter"],
+                        survivor["alive"],
+                    )
+                    for survivor in result.final_state["survivors"]
+                ]
+            )
+            self.assertEqual(result.to_dict(), replay_survival(result).to_dict())
+            if phase == 0:
+                self.assertNotIn("initiative_phase", result.initial_state)
+            else:
+                self.assertEqual(result.initial_state["initiative_phase"], phase)
+
+        self.assertEqual(
+            [orders[0][0] for orders in phase_orders],
+            ["Aster", "Birch", "Cinder", "Lumen"],
+        )
+        for beat in range(4):
+            for position in range(4):
+                self.assertEqual(
+                    {orders[beat][position] for orders in phase_orders},
+                    set(names),
+                )
+        self.assertTrue(all(physics == final_physics[0] for physics in final_physics))
+
+    def test_initiative_phase_rejects_invalid_scope_and_values(self) -> None:
+        names = ("Aster", "Birch", "Cinder", "Lumen")
+        with self.assertRaisesRegex(ValueError, "sequential-dialogue-v3"):
+            make_survival_world(names, seed=3, initiative_phase=1)
+        with self.assertRaisesRegex(TypeError, "must be an integer"):
+            make_survival_world(
+                names,
+                seed=3,
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                initiative_phase=True,
+            )
+        with self.assertRaisesRegex(ValueError, "population minus one"):
+            make_survival_world(
+                names,
+                seed=3,
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                initiative_phase=4,
+            )
+
     def test_dialogue_view_hides_global_sequence_side_channels(self) -> None:
         class EarlierPolicy:
             def __init__(self, action: Mapping[str, object]) -> None:

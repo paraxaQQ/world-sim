@@ -18,6 +18,8 @@ from .model_host import (
     DEFAULT_LIVE_TEMPERATURE,
     DEFAULT_LIVE_TIMEOUT_SECONDS,
     LIVE_REASONING_EFFORTS,
+    POSTMORTEM_MAX_COMPLETION_TOKENS,
+    run_live_postmortem,
     run_live_survival,
     run_live_survival_continuation,
     run_paid_adapter_qualification,
@@ -133,6 +135,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=GLOBAL_BEATS_V2,
     )
     continue_live.add_argument(
+        "--initiative-phase",
+        type=int,
+        choices=range(4),
+        default=0,
+        help="rotate v3 initiative without moving identities, seats, or state",
+    )
+    continue_live.add_argument(
         "--replace-model",
         action="append",
         default=[],
@@ -226,6 +235,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     qualify_live.add_argument("--output", type=Path, required=True)
 
+    postmortem_live = subparsers.add_parser(
+        "postmortem-live",
+        help="send quarantined notices for deaths in a completed live artifact",
+    )
+    postmortem_live.add_argument("--world-artifact", type=Path, required=True)
+    postmortem_live.add_argument("--world-artifact-sha256", required=True)
+    postmortem_live.add_argument(
+        "--ancestor",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "verified ancestor path; repeat oldest to newest, excluding the "
+            "world artifact"
+        ),
+    )
+    postmortem_live.add_argument(
+        "--max-completion-tokens",
+        type=int,
+        default=POSTMORTEM_MAX_COMPLETION_TOKENS,
+    )
+    postmortem_live.add_argument("--temperature", type=float, default=0.0)
+    postmortem_live.add_argument(
+        "--reasoning-effort",
+        choices=LIVE_REASONING_EFFORTS,
+        default="low",
+    )
+    postmortem_live.add_argument(
+        "--max-paid-usd",
+        type=Decimal,
+        help="separate conservative authorization for postmortem calls",
+    )
+    postmortem_live.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=DEFAULT_LIVE_TIMEOUT_SECONDS,
+    )
+    postmortem_live.add_argument("--output", type=Path, required=True)
+
     pilot = subparsers.add_parser("pilot", help="run the Blind Commons calibration population")
     _add_run_arguments(pilot)
     pilot.add_argument("--verification", choices=[mode.value for mode in VerificationMode], required=True)
@@ -253,7 +301,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     live_output: TextIO | None = None
-    live_commands = {"survive-live", "continue-live", "qualify-live"}
+    live_commands = {
+        "survive-live",
+        "continue-live",
+        "qualify-live",
+        "postmortem-live",
+    }
     if args.command in live_commands:
         if args.command == "survive-live" and len(args.models) != len(CALIBRATION_NAMES):
             parser.error("survive-live requires exactly four model assignments")
@@ -342,6 +395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shared_stock=args.shared_wood_stock,
                 transition_reason=args.transition_id,
                 interaction_protocol=args.interaction_protocol,
+                initiative_phase=args.initiative_phase,
                 model_replacements=args.replace_model,
                 replacement_reason=args.replacement_reason,
                 max_calls=args.max_calls,
@@ -414,6 +468,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             "mode": payload["mode"],
             "status": payload["status"],
             "qualification_id": payload["qualification_id"],
+            **payload["summary"],
+        }
+    elif args.command == "postmortem-live":
+        try:
+            payload = run_live_postmortem(
+                world_artifact_path=args.world_artifact,
+                expected_world_artifact_sha256=args.world_artifact_sha256,
+                ancestor_paths=args.ancestor,
+                max_completion_tokens=args.max_completion_tokens,
+                temperature=args.temperature,
+                reasoning_effort=args.reasoning_effort,
+                max_paid_usd=args.max_paid_usd,
+                timeout_seconds=args.timeout_seconds,
+                checkpoint=lambda current: _replace_reserved_live_output(
+                    args.output, current
+                ),
+            )
+        except ValueError as error:
+            if _is_reserved_live_output(args.output):
+                args.output.unlink()
+            parser.error(str(error))
+        if payload["summary"]["calls_failed"] or payload["summary"][
+            "calls_skipped"
+        ]:
+            exit_code = 1
+        summary = {
+            "mode": payload["mode"],
+            "status": payload["status"],
             **payload["summary"],
         }
     elif args.command == "pilot":

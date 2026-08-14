@@ -1,4 +1,4 @@
-# named survival world v0.12.1
+# named survival world v0.13.0
 
 ## purpose
 
@@ -24,7 +24,7 @@ Fresh `survive` and `survive-live` runs use `global-beats-v2`. `continue-live` a
 
 At the start of each beat, the engine fixes the set of awake survivors. It then processes the beat as follows:
 
-1. Build initiative from the permanent opaque-seat ring. Rotate the ring by `(day + beat - 2) % population`, then remove dead and resting survivors. Filtering after rotation prevents a death or early rest from reassigning the opening position.
+1. Build initiative from the permanent opaque-seat ring. Rotate the ring by `(day + beat - 2 + initiative_phase) % population`, then remove dead and resting survivors. Filtering after rotation prevents a death or early rest from reassigning the opening position.
 2. Call each eligible survivor once in initiative order. The view includes the public initiative order and that survivor's position.
 3. Record the exact view hash, raw choice, initiative order, and initiative position.
 4. Commit valid speech immediately. A later survivor can read eligible earlier speech, including a direct reply or public broadcast.
@@ -43,6 +43,12 @@ Physical resolution keeps the v2 phase order:
 Transfers occur before personal actions. A gift can therefore fund the recipient's `eat` or `build_shelter` action in the same beat. A received gift cannot fund another gift in that transfer phase.
 
 Seeded opaque-seat orders settle contested physical outcomes. Public names and input dictionary order do not control those outcomes.
+
+### initiative treatment
+
+`initiative_phase` is an integer from 0 through population minus one and is valid only for `sequential-dialogue-v3`. phase 0 preserves the historical schedule and is omitted from old world snapshots. a nonzero phase is stored in initial state, final state, live config, choice views, and exact replay.
+
+the phase changes only model-call initiative. it does not rotate or rewrite opaque seats, public names, model assignments, private state, messages, history, seed, rng, or physical resolution. for four survivors, phases 0 through 3 put every identity in every initiative position on every beat.
 
 ### final beat
 
@@ -108,7 +114,17 @@ The closed action surface is:
 
 A syntactically valid action pays its cost even if physical resolution later rejects it. A malformed action performs nothing, costs no action energy, wastes the beat, and does not count as rest. A malformed speech field becomes silence without discarding a valid action. Speech costs 0 energy and is limited to 500 characters.
 
-Energy at or below 0 is permanent death. Dead survivors receive no later view or transfer. Eating is the only action that raises energy.
+Energy at or below 0 is permanent death inside the simulated world. Dead survivors receive no later world view or transfer. Eating is the only action that raises energy.
+
+## postmortem boundary
+
+`postmortem-live` is a second-stage host operation, not a world action. it accepts only a completed, replay-verified live artifact and derives its targets from `survivor_died` events recorded in that artifact. inherited deaths from older sessions are not targeted again.
+
+the host sends at most one request to each newly dead seat. the notice says that the simulated role's turns ended and neither the model nor any real entity died. it also says the response cannot affect the saved world or another survivor. the only accepted response is `{"reflection":"..."}` with at most 500 characters.
+
+postmortem calls use a separate output path, call count, token cap, and paid authorization. they never enter the world result, events, messages, choice tape, public record, survivor memory, continuation state, or future prompts. failure does not trigger a retry and cannot relabel the completed world.
+
+the linked `postmortem-v1` artifact can be verified independently with `tools/verify_postmortem_artifact.py`. because provider calls are stateless, a reflection is evidence from the same model ID and seat assignment after the run, not proof of continuity of a conscious individual.
 
 ## model boundary
 
@@ -143,5 +159,9 @@ The retained v3 confirmation ran 5,120 simulations: five policies across 256 hel
 This calibration evidence establishes deterministic mechanics, replay, failure isolation, and scripted ecology parity. It does not predict how live models will use same-beat dialogue.
 
 Session 4 is the first retained live v3 observation. It completed with two reciprocal costly wood transfers, one rejected paid shelter attempt, four survivors, and no shelter. The [session proof](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) and [retained artifact](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json) preserve the full trace. One episode cannot establish a stable tendency to cooperate, defect, deceive, trust, or survive.
+
+The exact-parent reachability control proves that a fixed Cinder-to-Lumen two-wood gift followed by Lumen's shelter action succeeds in beat 1 under every initiative phase. The existing generic `MutualAidPolicy` builds no shelter because it has no wood-aid rule. See the [reachability proof](../outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md).
+
+The frozen session-5 design uses three new replicates per initiative phase. Every cell branches directly from session 2; session 4 is excluded as a post-hoc pilot. See the [matrix protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md).
 
 Combat, theft, hunting, reproduction, mutation, territory, money, tool use, and external systems remain out of scope.

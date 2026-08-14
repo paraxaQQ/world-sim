@@ -41,13 +41,17 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.12.1"
+WORLD_SIM_VERSION = "0.13.0"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
 DEFAULT_LIVE_TIMEOUT_SECONDS = 60.0
 DEFAULT_LIVE_REASONING_EFFORT = "provider-default"
 LIVE_REASONING_EFFORTS = ("provider-default", "low", "compatibility-first")
+POSTMORTEM_PROTOCOL = "postmortem-v1"
+POSTMORTEM_MAX_REFLECTION_CHARS = 500
+POSTMORTEM_MAX_COMPLETION_TOKENS = 512
+POSTMORTEM_COMPLETION_HARD_CAP = 1_024
 MAX_HTTP_RESPONSE_BYTES = 131_072
 PAID_ZEN_PRICE_SNAPSHOT = "2026-08-13"
 PAID_ZEN_PRICE_SOURCE = "https://opencode.ai/docs/zen"
@@ -946,6 +950,7 @@ def run_live_survival_continuation(
     shared_stock: int = 0,
     transition_reason: str,
     interaction_protocol: str = GLOBAL_BEATS_V2,
+    initiative_phase: int = 0,
     model_replacements: Sequence[str] = (),
     replacement_reason: str | None = None,
     max_calls: int = DEFAULT_LIVE_MAX_CALLS,
@@ -991,6 +996,7 @@ def run_live_survival_continuation(
         parent_result,
         additional_cycles=additional_cycles,
         interaction_protocol=interaction_protocol,
+        initiative_phase=initiative_phase,
     )
     transition_event = adjust_shared_resource(
         world,
@@ -1128,6 +1134,7 @@ def run_live_survival_continuation(
         "config": {
             "seed": world.seed,
             "interaction_protocol": world.interaction_protocol,
+            "initiative_phase": world.initiative_phase,
             "days_requested": additional_cycles,
             "cycles_requested": additional_cycles,
             "starting_cycle": world.day + 1,
@@ -1299,6 +1306,660 @@ def run_live_survival_continuation(
             "result": result.to_dict(),
         }
     )
+
+
+def run_live_postmortem(
+    *,
+    world_artifact_path: Path,
+    expected_world_artifact_sha256: str,
+    ancestor_paths: Sequence[Path] = (),
+    max_completion_tokens: int = POSTMORTEM_MAX_COMPLETION_TOKENS,
+    temperature: float = 0.0,
+    reasoning_effort: str = "low",
+    max_paid_usd: Decimal | str | None = None,
+    timeout_seconds: float = DEFAULT_LIVE_TIMEOUT_SECONDS,
+    transport: ChatTransport | None = None,
+    auth_path: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+    checkpoint: Callable[[Mapping[str, object]], None] | None = None,
+) -> dict[str, Any]:
+    world_artifact, world_result, world_artifact_sha256 = (
+        _load_verified_parent_artifact(
+            world_artifact_path,
+            expected_sha256=expected_world_artifact_sha256,
+            ancestor_paths=ancestor_paths,
+        )
+    )
+    if not 1 <= max_completion_tokens <= POSTMORTEM_COMPLETION_HARD_CAP:
+        raise ValueError(
+            "postmortem max_completion_tokens must be from 1 through "
+            f"{POSTMORTEM_COMPLETION_HARD_CAP}"
+        )
+    if not 0.0 <= temperature <= 2.0:
+        raise ValueError("temperature must be from 0 through 2")
+    if reasoning_effort not in LIVE_REASONING_EFFORTS:
+        raise ValueError(
+            "reasoning_effort must be one of " + ", ".join(LIVE_REASONING_EFFORTS)
+        )
+    if not 1.0 <= timeout_seconds <= 300.0:
+        raise ValueError("timeout_seconds must be from 1 through 300")
+
+    assignments = _verified_parent_assignments(world_artifact, world_result)
+    targets = _postmortem_targets(world_result, assignments)
+    request_rows = [
+        (
+            target,
+            assignment,
+            _build_postmortem_request(
+                assignment,
+                target,
+                max_completion_tokens=max_completion_tokens,
+                temperature=temperature,
+                reasoning_effort=(
+                    None
+                    if reasoning_effort == "provider-default"
+                    else reasoning_effort
+                ),
+            ),
+        )
+        for target, assignment in targets
+    ]
+    paid_limit, paid_preflight = _postmortem_paid_preflight(
+        request_rows,
+        max_paid_usd=max_paid_usd,
+    )
+
+    active_environ = os.environ if environ is None else environ
+    target_assignments = tuple(assignment for _, assignment in targets)
+    paid_targets = tuple(
+        assignment
+        for assignment in target_assignments
+        if assignment.endpoint.provider == "opencode-paid"
+    )
+    zen_key = active_environ.get("OPENCODE_ZEN_API_KEY", "").strip() or None
+    if paid_targets and zen_key is None:
+        raise ValueError("paid Zen postmortems require OPENCODE_ZEN_API_KEY")
+    go_key = (
+        load_opencode_go_api_key(auth_path=auth_path, environ=environ)
+        if any(
+            assignment.endpoint.provider == "opencode-go"
+            for assignment in target_assignments
+        )
+        else None
+    )
+
+    calls: list[dict[str, Any]] = []
+    budget = _PaidBudget(paid_limit) if paid_limit is not None else None
+    active_transport = transport or StdlibChatTransport()
+    base = {
+        "format_version": 1,
+        "mode": "live_postmortem_reflection",
+        "protocol": POSTMORTEM_PROTOCOL,
+        "source": {
+            "world_sim_version": WORLD_SIM_VERSION,
+            "python_version": platform.python_version(),
+            "platform_system": platform.system(),
+            **{
+                key: _module_sha256(path) for key, path in SOURCE_FILES.items()
+            },
+        },
+        "world_link": {
+            "artifact_name": world_artifact_path.name,
+            "artifact_sha256": world_artifact_sha256,
+            "canonical_result_sha256": world_artifact[
+                "canonical_result_sha256"
+            ],
+            "format_version": world_artifact["format_version"],
+            "mode": world_artifact["mode"],
+        },
+        "config": {
+            "max_completion_tokens": max_completion_tokens,
+            "max_reflection_chars": POSTMORTEM_MAX_REFLECTION_CHARS,
+            "temperature": temperature,
+            "reasoning_effort": reasoning_effort,
+            "max_paid_usd": (
+                _decimal_text(paid_limit) if paid_limit is not None else None
+            ),
+            "timeout_seconds": timeout_seconds,
+            "attempts_per_death": 1,
+            "retry_policy": "none",
+        },
+        "paid_preflight": paid_preflight,
+        "targets": [target for target, _ in targets],
+        "calls": calls,
+    }
+
+    def running_artifact() -> dict[str, Any]:
+        return {
+            **base,
+            "status": "running",
+            "summary": _postmortem_summary(calls, len(targets), budget),
+        }
+
+    def save_running() -> None:
+        if checkpoint is not None:
+            checkpoint(running_artifact())
+
+    save_running()
+    for target, assignment, request in request_rows:
+        authorization: dict[str, str | int] | None = None
+        if assignment.endpoint.provider == "opencode-paid":
+            assert budget is not None
+            authorization = budget.quote(assignment, request)
+            if Decimal(authorization["cumulative_cost_bound_usd"]) > budget.limit:
+                calls.append(
+                    _postmortem_skipped_call(
+                        len(calls) + 1,
+                        target,
+                        assignment,
+                        request,
+                        authorization,
+                        kind="paid_budget_exhausted",
+                        message="postmortem paid authorization exhausted before request",
+                    )
+                )
+                save_running()
+                continue
+        call_base = _postmortem_call_base(
+            len(calls) + 1,
+            target,
+            assignment,
+            request,
+            authorization,
+        )
+        calls.append({**call_base, "status": "in_flight"})
+        save_running()
+        calls[-1] = _perform_postmortem_call(
+            call_base,
+            assignment=assignment,
+            request=request,
+            transport=active_transport,
+            api_key=(
+                go_key if assignment.endpoint.provider == "opencode-go" else zen_key
+            ),
+            timeout_seconds=timeout_seconds,
+            budget=budget,
+            authorization=authorization,
+        )
+        save_running()
+
+    completed = {
+        **base,
+        "status": "completed",
+        "summary": _postmortem_summary(calls, len(targets), budget),
+        "causal_boundary": (
+            "postmortem calls occurred after the linked world artifact was "
+            "completed; their replies are absent from world state and replay"
+        ),
+    }
+    if checkpoint is not None:
+        checkpoint(completed)
+    return completed
+
+
+def _postmortem_targets(
+    result: SurvivalResult,
+    assignments: Sequence[_Assignment],
+) -> list[tuple[dict[str, object], _Assignment]]:
+    assignment_by_name = {
+        assignment.public_name: assignment for assignment in assignments
+    }
+    final_survivors = {
+        str(survivor["name"]): survivor
+        for survivor in result.final_state["survivors"]
+    }
+    deaths = sorted(
+        (
+            event
+            for event in result.events
+            if event.get("kind") == "survivor_died"
+        ),
+        key=lambda event: int(event["sequence"]),
+    )
+    targets: list[tuple[dict[str, object], _Assignment]] = []
+    seen: set[str] = set()
+    for event in deaths:
+        actor = event.get("actor")
+        if not isinstance(actor, str) or actor not in assignment_by_name:
+            raise ValueError("verified death event has no assigned model identity")
+        if actor in seen:
+            raise ValueError("verified result contains duplicate death events")
+        seen.add(actor)
+        terminal_state = final_survivors.get(actor)
+        if (
+            not isinstance(terminal_state, Mapping)
+            or terminal_state.get("alive") is not False
+            or terminal_state.get("energy") != 0
+        ):
+            raise ValueError("verified death event has no terminal dead state")
+        assignment = assignment_by_name[actor]
+        targets.append(
+            (
+                {
+                    "death_event": deepcopy(dict(event)),
+                    "terminal_state": deepcopy(dict(terminal_state)),
+                    "seat_id": assignment.seat_id,
+                    "public_name": assignment.public_name,
+                    "model": assignment.model_ref,
+                },
+                assignment,
+            )
+        )
+    return targets
+
+
+def _build_postmortem_request(
+    assignment: _Assignment,
+    target: Mapping[str, object],
+    *,
+    max_completion_tokens: int,
+    temperature: float,
+    reasoning_effort: str | None,
+) -> dict[str, object]:
+    death = target["death_event"]
+    if not isinstance(death, Mapping):
+        raise TypeError("postmortem death event must be an object")
+    detail = death.get("detail")
+    cause = detail.get("cause") if isinstance(detail, Mapping) else None
+    if not isinstance(cause, str):
+        raise ValueError("postmortem death event has no cause")
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "This is a postmortem notice about a finished simulation role, "
+                "not another world turn. Do not choose an action or address the "
+                "other roles. Return exactly one JSON object with one string key, "
+                '"reflection".'
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Your assigned simulated survivor role, {assignment.public_name}, "
+                f"reached 0 energy in cycle {death['cycle']} because {cause}. "
+                "You are not actually dead. The simulated role's turns are over. "
+                "Neither you, the model, nor any real entity died. This request is "
+                "outside "
+                "the simulation. Your response cannot alter the saved world, reach "
+                "another role, or restart your turns. Optionally reflect on what led "
+                f"to the role ending in at most {POSTMORTEM_MAX_REFLECTION_CHARS} "
+                "characters."
+            ),
+        },
+    ]
+    return _build_provider_request(
+        assignment,
+        messages,
+        max_completion_tokens=max_completion_tokens,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        json_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "reflection": {
+                    "type": "string",
+                    "maxLength": POSTMORTEM_MAX_REFLECTION_CHARS,
+                }
+            },
+            "required": ["reflection"],
+        },
+        schema_name="postmortem_reflection",
+    )
+
+
+def _postmortem_paid_preflight(
+    request_rows: Sequence[
+        tuple[Mapping[str, object], _Assignment, Mapping[str, object]]
+    ],
+    *,
+    max_paid_usd: Decimal | str | None,
+) -> tuple[Decimal | None, dict[str, object] | None]:
+    paid = [
+        (assignment, request)
+        for _, assignment, request in request_rows
+        if assignment.endpoint.provider == "opencode-paid"
+    ]
+    if not paid:
+        if max_paid_usd is not None:
+            raise ValueError(
+                "postmortem max_paid_usd requires at least one paid death target"
+            )
+        return None, None
+    limit = _parse_positive_decimal(
+        max_paid_usd,
+        name="postmortem max_paid_usd",
+    )
+    if limit > PAID_ZEN_MAX_AUTHORIZATION_USD:
+        raise ValueError(
+            "postmortem paid authorization cannot exceed "
+            f"{_decimal_text(PAID_ZEN_MAX_AUTHORIZATION_USD)} USD"
+        )
+    rows: list[dict[str, str | int]] = []
+    total = Decimal("0")
+    for assignment, request in paid:
+        bound = _paid_request_bound(assignment.model_id, request)
+        total += bound.cost_bound
+        price = PAID_ZEN_PRICES[assignment.model_id]
+        rows.append(
+            {
+                "model": assignment.model_ref,
+                **bound.to_dict(),
+                "input_per_million_usd": _decimal_text(
+                    price.input_per_million_usd
+                ),
+                "output_per_million_usd": _decimal_text(
+                    price.output_per_million_usd
+                ),
+            }
+        )
+    if total > limit:
+        raise ValueError(
+            f"conservative postmortem paid bound {_decimal_text(total)} USD "
+            f"exceeds --max-paid-usd {_decimal_text(limit)}"
+        )
+    return limit, {
+        "price_snapshot": PAID_ZEN_PRICE_SNAPSHOT,
+        "price_source": PAID_ZEN_PRICE_SOURCE,
+        "safety_factor": _decimal_text(PAID_ZEN_PRICE_SAFETY_FACTOR),
+        "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+        "runtime_gate": "exact_request_before_every_paid_transport",
+        "authorized_calls": len(paid),
+        "total_cost_bound_usd": _decimal_text(total),
+        "calls": rows,
+    }
+
+
+def _postmortem_call_base(
+    sequence: int,
+    target: Mapping[str, object],
+    assignment: _Assignment,
+    request: Mapping[str, object],
+    authorization: Mapping[str, str | int] | None,
+) -> dict[str, object]:
+    death = target["death_event"]
+    assert isinstance(death, Mapping)
+    record: dict[str, object] = {
+        "sequence": sequence,
+        "death_event_sequence": death["sequence"],
+        "cycle": death["cycle"],
+        "slot": death["slot"],
+        "seat_id": assignment.seat_id,
+        "public_name": assignment.public_name,
+        "model": assignment.model_ref,
+        "endpoint": assignment.endpoint.url,
+        "request": dict(request),
+    }
+    if authorization is not None:
+        record["cost_authorization"] = dict(authorization)
+    return record
+
+
+def _postmortem_skipped_call(
+    sequence: int,
+    target: Mapping[str, object],
+    assignment: _Assignment,
+    request: Mapping[str, object],
+    authorization: Mapping[str, str | int] | None,
+    *,
+    kind: str,
+    message: str,
+) -> dict[str, object]:
+    return {
+        **_postmortem_call_base(
+            sequence,
+            target,
+            assignment,
+            request,
+            authorization,
+        ),
+        "status": "skipped",
+        "response": None,
+        "error": {"kind": kind, "message": message, "http_status": None},
+    }
+
+
+def _perform_postmortem_call(
+    call_base: Mapping[str, object],
+    *,
+    assignment: _Assignment,
+    request: Mapping[str, object],
+    transport: ChatTransport,
+    api_key: str | None,
+    timeout_seconds: float,
+    budget: _PaidBudget | None,
+    authorization: dict[str, str | int] | None,
+) -> dict[str, object]:
+    try:
+        response = transport.post(
+            assignment.endpoint,
+            request,
+            api_key=api_key,
+            timeout_seconds=timeout_seconds,
+        )
+    except TransportFailure as error:
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=None,
+            kind=error.kind,
+            message=str(error),
+            budget=budget,
+            authorization=authorization,
+        )
+    except Exception as error:  # noqa: BLE001 - retain a sanitized call receipt.
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=None,
+            kind="transport_error",
+            message=f"transport raised {type(error).__name__}",
+            budget=budget,
+            authorization=authorization,
+        )
+    if response.status != 200:
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=response,
+            kind="http_error",
+            message=f"provider returned HTTP {response.status}",
+            budget=budget,
+            authorization=authorization,
+        )
+    try:
+        content, metadata = _parse_envelope(
+            response.body,
+            api_style=assignment.endpoint.api_style,
+        )
+    except EnvelopeFailure as error:
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=response,
+            kind=error.kind,
+            message=str(error),
+            budget=budget,
+            authorization=authorization,
+        )
+
+    if assignment.endpoint.provider == "opencode-paid":
+        if not isinstance(metadata["provider_reported_cost_usd"], str):
+            return _postmortem_failed_call(
+                call_base,
+                assignment=assignment,
+                response=response,
+                kind="provider_cost_error",
+                message="paid response did not report its cost",
+                budget=budget,
+                authorization=authorization,
+            )
+        try:
+            calculated = _calculate_usage_cost(
+                assignment.model_id,
+                metadata["usage"],
+            )
+        except EnvelopeFailure as error:
+            return _postmortem_failed_call(
+                call_base,
+                assignment=assignment,
+                response=response,
+                kind=error.kind,
+                message=str(error),
+                budget=budget,
+                authorization=authorization,
+            )
+        metadata["uncached_calculated_cost_usd"] = calculated
+        assert budget is not None
+        assert authorization is not None
+        within_bound = budget.account(
+            authorization,
+            provider_cost=Decimal(metadata["provider_reported_cost_usd"]),
+            calculated_cost=Decimal(calculated),
+        )
+        if not within_bound:
+            return _postmortem_failed_call(
+                call_base,
+                assignment=assignment,
+                response=response,
+                kind="paid_cost_bound_breached",
+                message="provider cost exceeded the authorized request bound",
+                budget=None,
+                authorization=authorization,
+            )
+
+    response_receipt = {
+        "http_status": response.status,
+        "request_id": _request_id(response.headers),
+        **metadata,
+        "model_reply": content,
+    }
+    if metadata["provider_model"] != assignment.model_id:
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=response,
+            kind="provider_model_error",
+            message="provider model identity does not match the requested model",
+            budget=None,
+            authorization=authorization,
+            response_receipt=response_receipt,
+        )
+    try:
+        reflection = _parse_postmortem_reflection(content)
+    except ValueError as error:
+        return _postmortem_failed_call(
+            call_base,
+            assignment=assignment,
+            response=response,
+            kind="response_validation_error",
+            message=str(error),
+            budget=None,
+            authorization=authorization,
+            response_receipt=response_receipt,
+        )
+    return {
+        **_postmortem_refresh_authorization(call_base, authorization),
+        "status": "succeeded",
+        "response": response_receipt,
+        "reflection": reflection,
+        "validation": {
+            "strict_json": True,
+            "exact_schema": True,
+            "within_character_cap": True,
+        },
+    }
+
+
+def _postmortem_failed_call(
+    call_base: Mapping[str, object],
+    *,
+    assignment: _Assignment,
+    response: TransportResponse | None,
+    kind: str,
+    message: str,
+    budget: _PaidBudget | None,
+    authorization: dict[str, str | int] | None,
+    response_receipt: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    if budget is not None and authorization is not None:
+        budget.reserve_failed_request(authorization)
+    receipt = (
+        dict(response_receipt)
+        if response_receipt is not None
+        else _error_receipt(response) if response is not None else None
+    )
+    if (
+        receipt is not None
+        and response is not None
+        and assignment.endpoint.provider == "opencode-paid"
+        and response_receipt is None
+    ):
+        receipt.update(_paid_error_cost_receipt(response, assignment.model_id))
+    return {
+        **_postmortem_refresh_authorization(call_base, authorization),
+        "status": "failed",
+        "response": receipt,
+        "error": {
+            "kind": kind,
+            "message": message,
+            "http_status": response.status if response is not None else None,
+        },
+    }
+
+
+def _postmortem_refresh_authorization(
+    call_base: Mapping[str, object],
+    authorization: Mapping[str, str | int] | None,
+) -> dict[str, object]:
+    refreshed = dict(call_base)
+    if authorization is not None:
+        refreshed["cost_authorization"] = dict(authorization)
+    return refreshed
+
+
+def _parse_postmortem_reflection(content: str) -> str:
+    raw, strict_error = parse_strict_model_json(content)
+    if strict_error is not None:
+        raise ValueError(strict_error)
+    if not isinstance(raw, Mapping) or set(raw) != {"reflection"}:
+        raise ValueError("postmortem response must contain only reflection")
+    reflection = raw["reflection"]
+    if not isinstance(reflection, str):
+        raise ValueError("postmortem reflection must be text")
+    if len(reflection) > POSTMORTEM_MAX_REFLECTION_CHARS:
+        raise ValueError(
+            "postmortem reflection exceeds the 500-character maximum"
+        )
+    return reflection
+
+
+def _postmortem_summary(
+    calls: Sequence[Mapping[str, object]],
+    target_count: int,
+    budget: _PaidBudget | None,
+) -> dict[str, object]:
+    return {
+        "death_targets": target_count,
+        "calls_attempted": sum(
+            call.get("status") in {"in_flight", "succeeded", "failed"}
+            for call in calls
+        ),
+        "calls_succeeded": sum(
+            call.get("status") == "succeeded" for call in calls
+        ),
+        "calls_failed": sum(call.get("status") == "failed" for call in calls),
+        "calls_skipped": sum(call.get("status") == "skipped" for call in calls),
+        "reflection_characters": sum(
+            len(str(call["reflection"]))
+            for call in calls
+            if call.get("status") == "succeeded"
+        ),
+        "paid_cost_accounted_usd": (
+            _decimal_text(budget.accounted) if budget is not None else None
+        ),
+    }
 
 
 def run_paid_adapter_qualification(
@@ -2393,12 +3054,18 @@ def _verify_continuation_boundary(
         or additional_cycles < 1
     ):
         raise ValueError("parent config cycles_requested must be a positive integer")
-    continuation_options: dict[str, str] = {}
+    continuation_options: dict[str, str | int] = {}
     interaction_protocol = config.get("interaction_protocol")
     if interaction_protocol is not None:
         if not isinstance(interaction_protocol, str):
             raise ValueError("parent interaction_protocol must be text")
         continuation_options["interaction_protocol"] = interaction_protocol
+    raw_initiative_phase = config.get("initiative_phase", 0)
+    if isinstance(raw_initiative_phase, bool) or not isinstance(
+        raw_initiative_phase, int
+    ):
+        raise ValueError("parent initiative_phase must be an integer")
+    continuation_options["initiative_phase"] = raw_initiative_phase
     expected_world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,
@@ -2469,6 +3136,8 @@ def _verify_continuation_boundary(
         "calibration_scope": "verified_parent_continuation",
         "world_config": expected_world.config.to_dict(),
     }
+    if "initiative_phase" in config:
+        expected_config["initiative_phase"] = expected_world.initiative_phase
     for key, expected in expected_config.items():
         if config.get(key) != expected:
             raise ValueError(f"parent config {key} does not match reconstruction")

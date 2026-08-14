@@ -373,6 +373,7 @@ def _host_v6_artifact(
     model_replacements: Sequence[str] = (
         "Cinder=opencode-paid/gpt-5.6-luna",
     ),
+    initiative_phase: int = 0,
 ) -> dict[str, object]:
     return run_live_survival_continuation(
         parent_path=parent_path,
@@ -383,6 +384,7 @@ def _host_v6_artifact(
         shared_stock=0,
         transition_reason="synthetic_host_v6",
         interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+        initiative_phase=initiative_phase,
         model_replacements=model_replacements,
         replacement_reason=(
             "replace Kimi for the bounded sequential retest"
@@ -767,6 +769,37 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                             parent_path=SESSION_2_ARTIFACT,
                             ancestor_paths=(SESSION_1_ARTIFACT,),
                         )
+
+    def test_v6_verifier_reconstructs_initiative_phase_as_a_treatment(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "phase-3-v6.json"
+            artifact = _host_v6_artifact(
+                transport=_HostFixtureTransport(),
+                initiative_phase=3,
+            )
+            _write_artifact(child, artifact)
+
+            receipt = VERIFIER.verify_live_artifact(
+                child,
+                parent_path=SESSION_2_ARTIFACT,
+                ancestor_paths=(SESSION_1_ARTIFACT,),
+            )
+
+            self.assertTrue(receipt["exact_replay"])
+            self.assertEqual(artifact["config"]["initiative_phase"], 3)
+            self.assertEqual(
+                [call["public_name"] for call in artifact["calls"]],
+                ["Birch", "Cinder", "Lumen", "Aster"],
+            )
+
+            artifact["config"]["initiative_phase"] = 2
+            _write_artifact(child, artifact)
+            with self.assertRaises(ValueError):
+                VERIFIER.verify_live_artifact(
+                    child,
+                    parent_path=SESSION_2_ARTIFACT,
+                    ancestor_paths=(SESSION_1_ARTIFACT,),
+                )
 
     def test_host_emitted_failed_v6_replays_its_committed_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

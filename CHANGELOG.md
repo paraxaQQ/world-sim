@@ -1,5 +1,14 @@
 # changelog
 
+## 0.13.0 - 2026-08-13
+
+- add `initiative_phase` as a v3-only treatment that rotates call order without moving seats, model assignments, private state, history, seed, rng, or physical resolution
+- preserve phase 0 replay for every retained artifact and reconstruct nonzero phases in live continuation verification
+- add an exact session-2 shelter reachability control across all four initiative phases, while retaining the generic food-only `MutualAidPolicy` failure as a policy mismatch
+- add quarantined `postmortem-v1` notices and optional 500-character reflections in a separate artifact linked to a completed world
+- verify postmortem targets, terminal notices, one-call limits, raw reflections, costs, and the immutable world link without exposing reflections to survivors or continuation state
+- freeze a twelve-cell session-5 turn-order matrix with session 4 excluded from its sample and record the later quantitative-claim audit boundary
+
 ## 0.12.1 - 2026-08-13
 
 - translate Luna's strict response schemas to the documented OpenAI subset by replacing literal `const` constraints with typed single-value enums and `oneOf` action unions with `anyOf`

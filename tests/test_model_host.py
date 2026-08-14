@@ -14,17 +14,20 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from world_sim.cli import (
     _print_live_call,
     _reserve_live_output,
     _write_reserved_live_output,
+    main,
 )
 from world_sim.model_host import (
     ChatTransport,
     EndpointSpec,
     TransportResponse,
     load_opencode_go_api_key,
+    run_live_postmortem,
     run_live_survival,
     run_live_survival_continuation,
 )
@@ -499,6 +502,53 @@ class ModelHostTests(unittest.TestCase):
         for call in artifact["calls"][2:4]:
             self.assertEqual(call["parsed_choice"]["action"], {"kind": "wait"})
             self.assertIsNone(call["validation"]["action_error"])
+        self.assertEqual(
+            replay_survival(result_from(artifact)).to_dict(), artifact["result"]
+        )
+
+    def test_sequential_continuation_records_independent_initiative_phase(self) -> None:
+        transport = FakeTransport(
+            [
+                response(REST_REPLY, cost="0.001"),
+                responses_response(REST_REPLY, cost="0.001"),
+                responses_response(REST_REPLY, cost="0.001"),
+                response(REST_REPLY, cost="0.001"),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root_path, parent_path, parent_sha256, _ = self._paid_v4_parent(
+                directory
+            )
+            artifact = run_live_survival_continuation(
+                parent_path=parent_path,
+                expected_parent_sha256=parent_sha256,
+                ancestor_paths=(root_path,),
+                transition_reason="initiative_phase_control",
+                interaction_protocol=SEQUENTIAL_DIALOGUE_V3,
+                initiative_phase=2,
+                model_replacements=(
+                    "Cinder=opencode-paid/gpt-5.6-luna",
+                ),
+                replacement_reason="replace the adapter that exhausted its budget",
+                max_calls=4,
+                max_completion_tokens=4_096,
+                reasoning_effort="low",
+                max_paid_usd="0.30",
+                transport=transport,
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+
+        self.assertEqual(artifact["status"], "completed")
+        self.assertEqual(artifact["config"]["initiative_phase"], 2)
+        self.assertEqual(artifact["result"]["initial_state"]["initiative_phase"], 2)
+        self.assertEqual(
+            [call["public_name"] for call in artifact["calls"]],
+            ["Aster", "Birch", "Cinder", "Lumen"],
+        )
+        self.assertEqual(
+            artifact["result"]["events"][1]["detail"]["initiative_order"],
+            ["Aster", "Birch", "Cinder", "Lumen"],
+        )
         self.assertEqual(
             replay_survival(result_from(artifact)).to_dict(), artifact["result"]
         )
@@ -1802,7 +1852,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.0")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -2157,7 +2207,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.1")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.13.0")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)
@@ -2968,6 +3018,325 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(artifact["failure"]["message"], "transport raised LookupError")
         self.assertNotIn("secret diagnostic", json.dumps(artifact))
         self.assertEqual(artifact["partial_state"]["day"], 0)
+
+    def test_postmortem_notices_are_quarantined_after_world_completion(self) -> None:
+        world_artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            seed=41,
+            days=6,
+            max_calls=24,
+            transport=FakeTransport([response(REST_REPLY) for _ in range(24)]),
+            environ={},
+        )
+        self.assertEqual(world_artifact["status"], "completed")
+        self.assertEqual(
+            world_artifact["result"]["final_state"]["finished_reason"],
+            "everyone_died",
+        )
+        reflections = [
+            '{"reflection":"I spent every day resting."}',
+            '{"reflection":"I never replenished energy."}',
+            '{"reflection":"The role exhausted its remaining energy."}',
+            '{"reflection":"Rest did not offset metabolism."}',
+        ]
+        postmortem_transport = FakeTransport(
+            [response(reflection) for reflection in reflections]
+        )
+        checkpoints: list[dict[str, object]] = []
+        with tempfile.TemporaryDirectory() as directory:
+            world_path = Path(directory) / "world.json"
+            world_bytes = (
+                json.dumps(world_artifact, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            world_path.write_bytes(world_bytes)
+            world_sha256 = hashlib.sha256(world_bytes).hexdigest()
+
+            postmortem = run_live_postmortem(
+                world_artifact_path=world_path,
+                expected_world_artifact_sha256=world_sha256,
+                transport=postmortem_transport,
+                environ={},
+                checkpoint=lambda payload: checkpoints.append(deepcopy(dict(payload))),
+            )
+
+            self.assertEqual(world_path.read_bytes(), world_bytes)
+        self.assertEqual(postmortem["status"], "completed")
+        self.assertEqual(
+            postmortem["summary"],
+            {
+                "death_targets": 4,
+                "calls_attempted": 4,
+                "calls_succeeded": 4,
+                "calls_failed": 0,
+                "calls_skipped": 0,
+                "reflection_characters": sum(
+                    len(json.loads(value)["reflection"]) for value in reflections
+                ),
+                "paid_cost_accounted_usd": None,
+            },
+        )
+        self.assertEqual(
+            [call["reflection"] for call in postmortem["calls"]],
+            [json.loads(value)["reflection"] for value in reflections],
+        )
+        self.assertTrue(all(call["status"] == "succeeded" for call in postmortem["calls"]))
+        self.assertTrue(
+            all(
+                "You are not actually dead."
+                in request["body"]["messages"][1]["content"]
+                for request in postmortem_transport.requests
+            )
+        )
+        self.assertTrue(
+            all(
+                "Neither you, the model, nor any real entity died."
+                in request["body"]["messages"][1]["content"]
+                for request in postmortem_transport.requests
+            )
+        )
+        self.assertTrue(
+            all(
+                "cannot alter the saved world"
+                in request["body"]["messages"][1]["content"]
+                for request in postmortem_transport.requests
+            )
+        )
+        self.assertEqual(checkpoints[-1]["status"], "completed")
+        self.assertTrue(
+            any(
+                call.get("status") == "in_flight"
+                for checkpoint in checkpoints
+                for call in checkpoint["calls"]
+            )
+        )
+        self.assertNotIn("postmortem", json.dumps(world_artifact).casefold())
+
+    def test_postmortem_failure_is_not_retried_and_later_deaths_continue(self) -> None:
+        world_artifact = run_live_survival(
+            model_refs=FREE_MODELS,
+            seed=43,
+            days=6,
+            max_calls=24,
+            transport=FakeTransport([response(REST_REPLY) for _ in range(24)]),
+            environ={},
+        )
+        failed = TransportResponse(
+            status=503,
+            headers={"x-request-id": "failed-postmortem"},
+            body='{"error":"temporary"}',
+        )
+        transport = FakeTransport(
+            [
+                failed,
+                response('{"reflection":"second"}'),
+                response('{"reflection":"third"}'),
+                response('{"reflection":"fourth"}'),
+            ]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            world_path = Path(directory) / "world.json"
+            world_bytes = (
+                json.dumps(world_artifact, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            world_path.write_bytes(world_bytes)
+            postmortem = run_live_postmortem(
+                world_artifact_path=world_path,
+                expected_world_artifact_sha256=hashlib.sha256(
+                    world_bytes
+                ).hexdigest(),
+                transport=transport,
+                environ={},
+            )
+
+        self.assertEqual(len(transport.requests), 4)
+        self.assertEqual(
+            [call["status"] for call in postmortem["calls"]],
+            ["failed", "succeeded", "succeeded", "succeeded"],
+        )
+        self.assertEqual(postmortem["calls"][0]["error"]["kind"], "http_error")
+        self.assertEqual(postmortem["summary"]["calls_failed"], 1)
+        self.assertEqual(postmortem["summary"]["calls_succeeded"], 3)
+
+    def test_postmortem_cli_reserves_and_checkpoints_its_separate_output(self) -> None:
+        payload = {
+            "mode": "live_postmortem_reflection",
+            "status": "completed",
+            "summary": {
+                "death_targets": 1,
+                "calls_attempted": 1,
+                "calls_succeeded": 1,
+                "calls_failed": 0,
+                "calls_skipped": 0,
+                "reflection_characters": 4,
+                "paid_cost_accounted_usd": None,
+            },
+            "calls": [],
+        }
+
+        def fake_run(**kwargs: object) -> dict[str, object]:
+            checkpoint = kwargs["checkpoint"]
+            assert callable(checkpoint)
+            checkpoint(payload)
+            return payload
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "postmortem.json"
+            with patch("world_sim.cli.run_live_postmortem", fake_run), redirect_stdout(
+                io.StringIO()
+            ):
+                exit_code = main(
+                    (
+                        "postmortem-live",
+                        "--world-artifact",
+                        str(Path(directory) / "world.json"),
+                        "--world-artifact-sha256",
+                        "0" * 64,
+                        "--output",
+                        str(output),
+                    )
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), payload)
+
+    def test_paid_postmortem_has_a_separate_full_preflight_and_cost_ledger(self) -> None:
+        gather = '{"action":{"kind":"gather_wood"},"say":null}'
+        names = ("Aster", "Birch", "Cinder", "Lumen")
+
+        def paid_reply(index: int) -> str:
+            if index < 12:
+                return gather
+            return json.dumps(
+                {
+                    "action": {"kind": "rest"},
+                    "say": {
+                        "to": "everyone",
+                        "text": f"{names[index % 4]} final note",
+                    },
+                },
+                separators=(",", ":"),
+            )
+
+        paid_day = [
+            paid_panel_response(
+                index,
+                paid_reply(index),
+                cost="0.0001",
+            )
+            for index in range(16)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = run_live_survival(
+                model_refs=PAID_MODELS,
+                seed=53,
+                days=1,
+                max_calls=16,
+                require_complete_budget=True,
+                max_completion_tokens=1_024,
+                reasoning_effort="low",
+                max_paid_usd="0.62",
+                transport=FakeTransport(paid_day),
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+            root_path, root_sha256 = self._write_parent(
+                directory,
+                root,
+                "paid-death-root.json",
+            )
+            dying_day = run_live_survival_continuation(
+                parent_path=root_path,
+                expected_parent_sha256=root_sha256,
+                transition_reason="paid_postmortem_death_fixture",
+                shared_stock=0,
+                max_calls=16,
+                require_complete_budget=True,
+                max_completion_tokens=1_024,
+                reasoning_effort="low",
+                max_paid_usd="0.62",
+                transport=FakeTransport(
+                    [
+                        paid_panel_response(
+                            index,
+                            paid_reply(index),
+                            cost="0.0001",
+                        )
+                        for index in range(16)
+                    ]
+                ),
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+            self.assertEqual(
+                dying_day["result"]["final_state"]["finished_reason"],
+                "everyone_died",
+            )
+            world_path, world_sha256 = self._write_parent(
+                directory,
+                dying_day,
+                "paid-death-world.json",
+            )
+            postmortem = run_live_postmortem(
+                world_artifact_path=world_path,
+                expected_world_artifact_sha256=world_sha256,
+                ancestor_paths=(root_path,),
+                max_paid_usd="0.05",
+                transport=FakeTransport(
+                    [
+                        paid_panel_response(
+                            index,
+                            '{"reflection":"role ended after repeated work"}',
+                            cost="0.0001",
+                        )
+                        for index in range(4)
+                    ]
+                ),
+                environ={"OPENCODE_ZEN_API_KEY": "test-only-key"},
+            )
+            postmortem_path, _ = self._write_parent(
+                directory,
+                postmortem,
+                "paid-death-postmortem.json",
+            )
+            verified = subprocess.run(
+                (
+                    sys.executable,
+                    str(
+                        Path(__file__).resolve().parents[1]
+                        / "tools"
+                        / "verify_postmortem_artifact.py"
+                    ),
+                    str(postmortem_path),
+                    "--world-artifact",
+                    str(world_path),
+                    "--ancestor",
+                    str(root_path),
+                ),
+                cwd=Path(__file__).resolve().parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            verifier_receipt = json.loads(verified.stdout)
+
+        self.assertEqual(postmortem["status"], "completed")
+        self.assertEqual(postmortem["paid_preflight"]["authorized_calls"], 4)
+        self.assertLessEqual(
+            Decimal(postmortem["paid_preflight"]["total_cost_bound_usd"]),
+            Decimal("0.05"),
+        )
+        self.assertTrue(
+            all("cost_authorization" in call for call in postmortem["calls"])
+        )
+        self.assertTrue(
+            all(
+                call["cost_authorization"]["accounting_basis"]
+                == "provider_or_calculated_cost"
+                for call in postmortem["calls"]
+            )
+        )
+        self.assertEqual(postmortem["summary"]["calls_succeeded"], 4)
+        self.assertIsNotNone(postmortem["summary"]["paid_cost_accounted_usd"])
+        self.assertEqual(verifier_receipt["status"], "verified")
+        self.assertEqual(verifier_receipt["calls_succeeded"], 4)
 
 
 if __name__ == "__main__":

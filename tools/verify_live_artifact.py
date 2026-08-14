@@ -339,6 +339,8 @@ def _verify_continuation_artifact(
     continuation_options: dict[str, Any] = {}
     if "interaction_protocol" in config:
         continuation_options["interaction_protocol"] = config["interaction_protocol"]
+    if "initiative_phase" in config:
+        continuation_options["initiative_phase"] = config["initiative_phase"]
     expected_world = continue_survival_world(
         parent_result,
         additional_cycles=additional_cycles,

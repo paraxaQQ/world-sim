@@ -389,6 +389,24 @@ class SurvivalWorld:
     finished_reason: str | None = None
     prior_public_record: PriorPublicRecord | None = None
     interaction_protocol: str = SLOTS_V1
+    initiative_phase: int = 0
+
+    def __post_init__(self) -> None:
+        if isinstance(self.initiative_phase, bool) or not isinstance(
+            self.initiative_phase, int
+        ):
+            raise TypeError("initiative_phase must be an integer")
+        if not 0 <= self.initiative_phase < len(self.survivors):
+            raise ValueError(
+                "initiative_phase must be from 0 through population minus one"
+            )
+        if (
+            self.initiative_phase != 0
+            and self.interaction_protocol != SEQUENTIAL_DIALOGUE_V3
+        ):
+            raise ValueError(
+                "initiative_phase requires sequential-dialogue-v3"
+            )
 
     @property
     def finished(self) -> bool:
@@ -426,6 +444,8 @@ class SurvivalWorld:
             payload["prior_public_record"] = self.prior_public_record.to_dict()
         if self.interaction_protocol != SLOTS_V1:
             payload["interaction_protocol"] = self.interaction_protocol
+        if self.initiative_phase != 0:
+            payload["initiative_phase"] = self.initiative_phase
         return payload
 
 

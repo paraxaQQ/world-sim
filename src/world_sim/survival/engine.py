@@ -50,6 +50,7 @@ def make_survival_world(
     seed: int,
     config: SurvivalConfig | None = None,
     interaction_protocol: str = GLOBAL_BEATS_V2,
+    initiative_phase: int = 0,
 ) -> SurvivalWorld:
     active_config = config or SurvivalConfig()
     active_protocol = validate_interaction_protocol(interaction_protocol)
@@ -92,6 +93,7 @@ def make_survival_world(
             wood_capacity=active_config.wood_capacity,
         ),
         interaction_protocol=active_protocol,
+        initiative_phase=initiative_phase,
     )
 
 
@@ -100,6 +102,7 @@ def continue_survival_world(
     *,
     additional_cycles: int = 1,
     interaction_protocol: str | None = None,
+    initiative_phase: int | None = None,
 ) -> SurvivalWorld:
     if isinstance(additional_cycles, bool) or not isinstance(
         additional_cycles, int
@@ -155,6 +158,23 @@ def continue_survival_world(
             snapshot.pop("interaction_protocol", None)
         else:
             snapshot["interaction_protocol"] = active_protocol
+    active_protocol = validate_interaction_protocol(
+        snapshot.get("interaction_protocol", SLOTS_V1)
+    )
+    active_phase = (
+        snapshot.get("initiative_phase", 0)
+        if initiative_phase is None
+        else initiative_phase
+    )
+    _validate_initiative_phase(
+        active_phase,
+        population=len(snapshot["survivors"]),
+        interaction_protocol=active_protocol,
+    )
+    if active_phase == 0:
+        snapshot.pop("initiative_phase", None)
+    else:
+        snapshot["initiative_phase"] = active_phase
     world = _world_from_snapshot(
         snapshot,
         event_sequence_offset=event_sequence_offset,
@@ -1407,7 +1427,7 @@ def _initiative_order(
     # Advancing once for both the day and beat rotates the daily opener while
     # preserving one turn in every position per four-person, four-beat day.
     # Filtering afterward keeps death and rest from reassigning that advantage.
-    offset = (cycle + slot - 2) % len(ring)
+    offset = (cycle + slot - 2 + world.initiative_phase) % len(ring)
     rotated = ring[offset:] + ring[:offset]
     eligible_seats = {survivor.seat_id for survivor in eligible}
     return [
@@ -1787,7 +1807,24 @@ def _world_from_snapshot(
         ),
         prior_public_record=prior_public_record,
         interaction_protocol=interaction_protocol,
+        initiative_phase=snapshot.get("initiative_phase", 0),
     )
+
+
+def _validate_initiative_phase(
+    value: object,
+    *,
+    population: int,
+    interaction_protocol: str,
+) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("initiative_phase must be an integer")
+    if not 0 <= value < population:
+        raise ValueError(
+            "initiative_phase must be from 0 through population minus one"
+        )
+    if value != 0 and interaction_protocol != SEQUENTIAL_DIALOGUE_V3:
+        raise ValueError("initiative_phase requires sequential-dialogue-v3")
 
 
 def _reject_resolution(

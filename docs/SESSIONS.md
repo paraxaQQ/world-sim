@@ -229,3 +229,34 @@ The primary transfer-to-shelter outcome is false. The broader costly-social-beha
 ### claim boundary
 
 This run shows a costly reciprocal coordination failure in one path-dependent episode. It does not establish why it occurred or whether any named model has a stable tendency to cooperate, defect, misunderstand, or correct others. Session 4 changed several inference and protocol variables at once, so causal claims require separately frozen controls and replications.
+
+## session 4 reachability control — scripted, no provider calls
+
+**status:** completed
+
+**date:** 2026-08-13
+
+the exact session-2 parent was replayed, moved to `sequential-dialogue-v3`, and given the same shared-wood `2 -> 0` transition. the existing generic `MutualAidPolicy` built zero shelters because it has no wood-transfer rule.
+
+a fixed control then made Cinder give Lumen two wood while Lumen submitted `build_shelter`. the gift resolved at sequence `158`; the shelter resolved at sequence `161`. the same tape succeeded under initiative phases 0, 1, 2, and 3, and every result replayed exactly.
+
+this proves that session 4's dilemma was physically reachable. it does not show that any model was likely to discover the successful tape.
+
+- [proof](../outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md)
+- [full control artifact](../outputs/v0.13.0-session-004-shelter-reachability-control-29993.json)
+- artifact SHA-256: `df390cfd8ab2a18c43a6e1da1485038946939c2c15ba1e0be28a2f7638830ebb`
+
+## session 5 — turn-order matrix
+
+**status:** frozen, not run
+
+**date:** 2026-08-13
+
+session 5 is twelve new sibling episodes from the exact session-2 parent: three replicates for each of four initiative phases. session 4 does not count toward the sample because the turn-order factor was chosen after its result was seen.
+
+the phase rotates only model-call initiative. opaque seat, public name, model assignment, private state, history, seed, rng, transition, and physical resolution stay fixed. technical failures will be retained and censored without a retry.
+
+the observed-cost projection is `$0.76937928`. the separate worst-case authorization is `$7.4076288`, rounded to a `$7.41` aggregate gate. no provider calls have been made for this matrix.
+
+- [human-readable protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md)
+- [machine-readable manifest](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.json)
