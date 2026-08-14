@@ -131,27 +131,6 @@ the retained free qualification made 16 calls with zero response-validation erro
 
 free Zen model availability can change. check the [current OpenCode list](https://opencode.ai/docs/zen) before running it.
 
-## the paid campaign
-
-the first paid panel placed one model behind each name:
-
-| public name | hidden model |
-| --- | --- |
-| Aster | `deepseek-v4-flash` |
-| Birch | `grok-4.5` |
-| Cinder | `kimi-k2.6` |
-| Lumen | `glm-5.2` |
-
-before a model enters the world, it must pass a separate adapter probe with no names, scarcity, survival framing, or experiment seed. the probe checks the real endpoint, output cap, JSON mode, envelope parser, usage parser, and cost parser. it never retries or repairs an answer.
-
-the exact paid commands are preserved inside their frozen protocol files because completed sessions must not be rerun:
-
-- [session 1 protocol](outputs/v0.8.0-paid-survival-29993-protocol.md)
-- [session 2 protocol](outputs/v0.9.0-session-002-shelter-dilemma-29993-protocol.md)
-- [session 3 protocol](outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993-protocol.md)
-
-earlier MiniMax and Grok qualification failures remain in the repository. we keep failed adapters for the same reason we keep failed episodes: deleting them would make the history cleaner and the evidence worse.
-
 ## continue the same world
 
 `continue-live` does not recreate earlier days. it verifies the supplied artifact chain, restores the exact private state, preserves the public identities, and applies one logged between-session transition.
@@ -184,14 +163,6 @@ every survival prompt contains the exact response schema. one response carries o
 the host sends no tools and makes no repair call. malformed actions are recorded and waste the opportunity. invalid speech becomes silence without discarding an otherwise valid action.
 
 the host accepts `opencode/MODEL` for `-free` Zen models, `opencode-go/MODEL` for the Go endpoint, and `opencode-paid/MODEL` for the pinned paid allowlist. the strict local parser remains the final authority.
-
-## why there are so many receipts
-
-because a cool transcript is not enough.
-
-each serious run keeps its protocol, complete artifact, proof, costs, source hashes, and bounded interpretation. completed sessions are content-addressed. continuations fail closed when a parent, transition, model mapping, replay boundary, or source receipt does not match.
-
-that is the boring part that lets us enjoy the weird part without turning it into prompt theater.
 
 ## repository map
 
