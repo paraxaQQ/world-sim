@@ -1,5 +1,11 @@
 # changelog
 
+## 0.12.1 - 2026-08-13
+
+- translate Luna's strict response schemas to the documented OpenAI subset by replacing literal `const` constraints with typed single-value enums and `oneOf` action unions with `anyOf`
+- keep the canonical world prompt and existing providers' schema bodies unchanged so committed campaign artifacts still reconstruct exactly
+- retain the failed Luna probe as qualification 004 and reserve qualification 005 for the repaired adapter
+
 ## 0.12.0 - 2026-08-13
 
 - add `sequential-dialogue-v3`: speech commits in rotating initiative order while physical actions remain sealed until atomic beat resolution

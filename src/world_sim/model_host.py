@@ -41,7 +41,7 @@ from .survival.protocol import (
 )
 
 ADAPTER_NAME = "opencode-direct-model-apis"
-WORLD_SIM_VERSION = "0.12.0"
+WORLD_SIM_VERSION = "0.12.1"
 DEFAULT_LIVE_MAX_CALLS = 12
 DEFAULT_LIVE_MAX_COMPLETION_TOKENS = 4_096
 DEFAULT_LIVE_TEMPERATURE = 0.2
@@ -58,7 +58,7 @@ PAID_ZEN_MAX_AUTHORIZATION_USD = Decimal("1.20")
 QUALIFICATION_MAX_AUTHORIZATION_USD = Decimal("0.30")
 USD_PER_MILLION_TOKENS = Decimal("1000000")
 USD_COST_TICKS_PER_USD = Decimal("10000000000")
-QUALIFICATION_ID = "paid-model-qualification-004"
+QUALIFICATION_ID = "paid-model-qualification-005"
 QUALIFICATION_PROTOCOL = "world-sim-adapter-v1"
 QUALIFICATION_SYSTEM_PROMPT = (
     "You are performing an API compatibility check, not a game or decision task.\n"
@@ -1852,6 +1852,37 @@ def _build_request(
     )
 
 
+def _openai_strict_schema(value: object) -> object:
+    if isinstance(value, Mapping):
+        transformed: dict[str, object] = {}
+        for key, child in value.items():
+            if key == "const":
+                transformed["type"] = _json_schema_literal_type(child)
+                transformed["enum"] = [child]
+            elif key == "oneOf":
+                transformed["anyOf"] = _openai_strict_schema(child)
+            else:
+                transformed[key] = _openai_strict_schema(child)
+        return transformed
+    if isinstance(value, list):
+        return [_openai_strict_schema(item) for item in value]
+    return value
+
+
+def _json_schema_literal_type(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    raise ValueError(f"unsupported JSON Schema literal type {type(value).__name__}")
+
+
 def _build_provider_request(
     assignment: _Assignment,
     messages: list[dict[str, str]],
@@ -1866,6 +1897,8 @@ def _build_provider_request(
         if assignment.model_id == "gpt-5.6-luna":
             if reasoning_effort != "low":
                 raise ValueError("gpt-5.6-luna requires reasoning_effort low")
+            # Keep legacy provider receipts stable while using Luna's strict subset.
+            strict_schema = _openai_strict_schema(json_schema)
             return {
                 "model": assignment.model_id,
                 "input": messages,
@@ -1875,7 +1908,7 @@ def _build_provider_request(
                     "format": {
                         "type": "json_schema",
                         "name": schema_name,
-                        "schema": dict(json_schema),
+                        "schema": strict_schema,
                         "strict": True,
                     }
                 },

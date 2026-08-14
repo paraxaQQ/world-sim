@@ -830,6 +830,17 @@ class ModelHostTests(unittest.TestCase):
         self.assertEqual(cinder_request["max_output_tokens"], 4_096)
         self.assertEqual(cinder_request["reasoning"], {"effort": "low"})
         self.assertTrue(cinder_request["text"]["format"]["strict"])
+        cinder_schema = cinder_request["text"]["format"]["schema"]
+        serialized_schema = json.dumps(cinder_schema)
+        self.assertNotIn('"const"', serialized_schema)
+        self.assertNotIn('"oneOf"', serialized_schema)
+        self.assertIn("anyOf", cinder_schema["properties"]["action"])
+        action_kinds = {
+            variant["properties"]["kind"]["enum"][0]
+            for variant in cinder_schema["properties"]["action"]["anyOf"]
+        }
+        self.assertIn("rest", action_kinds)
+        self.assertIn("give_wood", action_kinds)
         self.assertNotIn("temperature", cinder_request)
         self.assertEqual(
             artifact["paid_preflight"]["cost_bound_scope"],
@@ -1791,7 +1802,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.1")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -2146,7 +2157,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.12.1")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

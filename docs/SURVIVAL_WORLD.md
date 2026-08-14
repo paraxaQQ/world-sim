@@ -1,4 +1,4 @@
-# named survival world v0.12.0
+# named survival world v0.12.1
 
 ## purpose
 

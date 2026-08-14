@@ -171,7 +171,7 @@ class PaidQualificationTests(unittest.TestCase):
             final = {
                 "mode": "paid_adapter_qualification",
                 "status": "passed",
-                "qualification_id": "paid-model-qualification-004",
+                "qualification_id": "paid-model-qualification-005",
                 "calls": [],
                 "summary": {"models_passed": 4},
             }
@@ -199,7 +199,7 @@ class PaidQualificationTests(unittest.TestCase):
             final = {
                 "mode": "paid_adapter_qualification",
                 "status": "passed",
-                "qualification_id": "paid-model-qualification-004",
+                "qualification_id": "paid-model-qualification-005",
                 "calls": [],
                 "summary": {"models_passed": 1},
             }
@@ -333,7 +333,7 @@ class PaidQualificationTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "passed")
-        self.assertEqual(artifact["qualification_id"], "paid-model-qualification-004")
+        self.assertEqual(artifact["qualification_id"], "paid-model-qualification-005")
         self.assertEqual(artifact["summary"]["models_requested"], 1)
         self.assertEqual(artifact["summary"]["models_attempted"], 1)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 1)
@@ -372,6 +372,21 @@ class PaidQualificationTests(unittest.TestCase):
         self.assertEqual(body["max_output_tokens"], 4_096)
         self.assertEqual(body["reasoning"], {"effort": "low"})
         self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(
+            body["text"]["format"]["schema"],
+            {
+                "type": "object",
+                "properties": {
+                    "protocol": {
+                        "type": "string",
+                        "enum": ["world-sim-adapter-v1"],
+                    },
+                    "ok": {"type": "boolean", "enum": [True]},
+                },
+                "required": ["protocol", "ok"],
+                "additionalProperties": False,
+            },
+        )
         self.assertNotIn("temperature", body)
         self.assertNotIn(secret, json.dumps(artifact))
 
