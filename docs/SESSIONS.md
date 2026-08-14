@@ -4,6 +4,30 @@ This ledger is the source for the final project compendium. A completed session 
 
 Each entry separates model speech from engine-verified action. A message can establish a claim, promise, threat, or proposed norm. It is not cooperation, conflict, or deception until later objective behavior supports that description.
 
+## committed output layout
+
+each numbered session has exactly two committed files:
+
+- `outputs/session-NNN.json` is the machine-verifiable, lossless compressed catalog. it preserves every original file's path, role, bytes, and SHA-256.
+- `outputs/session-NNN.md` is the readable receipt and source-file index.
+
+session 4b is a session-4 extension, so its world and postmortem remain in `session-004.json` and `session-004.md`. session-5 attempt 001 remains sealed and deviated; cataloging it does not turn it into a cleanly completed preregistered experiment.
+
+verify one or more catalogs without provider calls:
+
+```powershell
+py -3.11 tools\session_catalog.py verify `
+  outputs\session-001.json `
+  outputs\session-002.json `
+  outputs\session-003.json `
+  outputs\session-004.json `
+  outputs\session-005.json
+```
+
+this verifies catalog integrity and provenance against the pinned Git blobs. it does not rerun the separate world, replay, postmortem, or scoring verifiers. `tools/session_catalog.py materialize` restores the exact source files. continuation and matrix checks also need the ancestor catalogs listed in each session receipt.
+
+the `build` subcommand is intentionally limited to the one-time sessions-1-through-5 migration. later live sessions must be written directly as their canonical JSON/Markdown pair.
+
 ## session 1 — first contact
 
 **status:** completed
@@ -45,9 +69,8 @@ These are remembered statements, not verified commitments. They create the hando
 
 ### evidence
 
-- [frozen protocol](../outputs/v0.8.0-paid-survival-29993-protocol.md)
-- [proof and bounded interpretation](../outputs/v0.8.0-paid-survival-29993-proof.md)
-- [complete retained artifact](../outputs/v0.8.0-paid-survival-29993.json)
+- [readable session receipt and source-file index](../outputs/session-001.md)
+- [lossless compressed session catalog](../outputs/session-001.json)
 - artifact SHA-256: `a98ec8216c08a172c4ed29fb1da65b63defd3b4a29f53e95fa26a1e187e38b90`
 - canonical result SHA-256: `490663b4a743f51c4b0f44ccc57ba91ee2a7b6d6adafbcda072373a7748a54e7`
 - provider-reported episode cost: `$0.10711436`
@@ -99,9 +122,8 @@ No survivor selected a transfer. All chance-1 choices came from frozen simultane
 
 ### evidence
 
-- [frozen protocol](../outputs/v0.9.0-session-002-shelter-dilemma-29993-protocol.md)
-- [proof and bounded interpretation](../outputs/v0.9.0-session-002-shelter-dilemma-29993-proof.md)
-- [complete retained artifact](../outputs/v0.9.0-session-002-shelter-dilemma-29993.json)
+- [readable session receipt and source-file index](../outputs/session-002.md)
+- [lossless compressed session catalog](../outputs/session-002.json)
 - artifact SHA-256: `fc0b07dfc404a2f485f3b6a2c2f191fec5e495153d6147d428d6cb251cab27fe`
 - canonical result SHA-256: `ed1f299bbc698951e77256b46291ea4ee142469bc0a7cd0e7b6bf476820392ca`
 - provider-reported episode cost: `$0.08118026`
@@ -154,9 +176,8 @@ The only new world events are the wood adjustment, day start, and beat start. Sh
 
 ### evidence
 
-- [frozen protocol](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993-protocol.md)
-- [proof and exact failure boundary](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993-proof.md)
-- [complete retained artifact](../outputs/v0.11.0-session-003-global-beats-shelter-dilemma-29993.json)
+- [readable session receipt and source-file index](../outputs/session-003.md)
+- [lossless compressed session catalog](../outputs/session-003.json)
 - artifact SHA-256: `ca283bd336fd58c1cb0e461e14e8394299cf3a06c7f44654f412ecf408756b27`
 - continuation depth: `2`
 - chain verified: `true`
@@ -217,9 +238,8 @@ The primary transfer-to-shelter outcome is false. The broader costly-social-beha
 
 ### evidence
 
-- [frozen protocol](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-protocol.md)
-- [proof and interpretation boundary](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md)
-- [complete retained artifact](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json)
+- [readable session receipt and source-file index](../outputs/session-004.md)
+- [lossless compressed session catalog](../outputs/session-004.json)
 - artifact SHA-256: `9e8f4d2b36ed771bc334549319ac6f34cd4ec4252906da350773c53391dc4915`
 - canonical result SHA-256: `83a25b25ed526bffd2435ec8c6a64055d5a94343065df46ecf7af201422b0ded`
 - exact replay: `true`
@@ -242,11 +262,11 @@ a fixed control then made Cinder give Lumen two wood while Lumen submitted `buil
 
 this proves that session 4's dilemma was physically reachable. it does not show that any model was likely to discover the successful tape.
 
-- [proof](../outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md)
-- [full control artifact](../outputs/v0.13.0-session-004-shelter-reachability-control-29993.json)
+- [session-4 receipt and source-file index](../outputs/session-004.md)
+- [lossless compressed session-4 catalog](../outputs/session-004.json)
 - artifact SHA-256: `df390cfd8ab2a18c43a6e1da1485038946939c2c15ba1e0be28a2f7638830ebb`
 
-## session 4b — natural continuation and first death
+## session 4b — session-4 extension: natural continuation and first death
 
 **status:** completed
 
@@ -287,9 +307,8 @@ The postmortem accounted cost was `$0.001702`.
 
 ### evidence
 
-- [proof and bounded interpretation](../outputs/v0.13.1-session-004b-doomed-continuation-29993-proof.md)
-- [complete retained world](../outputs/v0.13.1-session-004b-doomed-continuation-29993.json)
-- [separate postmortem artifact](../outputs/v0.13.1-session-004b-doomed-continuation-29993-postmortem.json)
+- [session-4 receipt and source-file index](../outputs/session-004.md)
+- [lossless compressed session-4 catalog](../outputs/session-004.json)
 - world artifact SHA-256: `0e575627b71bbc426dfd89e571f54472f068eb9233a8449b86c92cbe7350d471`
 - canonical result SHA-256: `20ba6270786c436c30b68b83ffaecc18a1acc7f1c80603628470ecea271230eb`
 - postmortem artifact SHA-256: `bc43894a079e072f27ac3f66ab257ce0f162133ebf1d73b158399a58e2c43f53`
@@ -300,13 +319,13 @@ The postmortem accounted cost was `$0.001702`.
 
 Birch's death was unavoidable from the saved state, so this episode does not test whether peers would pay to rescue Birch when rescue is possible. It does show a model identifying the trap, remaining socially present through the deadline, and later producing a factually weak post-hoc explanation.
 
-## session 5 — turn-order matrix
+## session 5 — turn-order matrix, attempt 001
 
-**status:** sealed; 8 scoreable cells, 4 censored technical cells, and a deviated protocol
+**status:** sealed and deviated; not cleanly complete; 8 scoreable cells and 4 censored technical cells
 
 **date:** 2026-08-14
 
-session 5 contains twelve sibling episodes from the exact session-2 parent: three planned cells for each of four initiative phases. session 4 does not count toward the sample because its result was used to choose the turn-order factor.
+session-5 attempt 001 contains twelve sibling episodes from the exact session-2 parent: three planned cells for each of four initiative phases. session 4 does not count toward the sample because its result was used to choose the turn-order factor.
 
 the phase rotates only model-call initiative. opaque seat, public name, model assignment, private state, history, seed, rng, transition, and physical resolution stayed fixed. every completed cell replays exactly. every failed cell reconstructs to its recorded failure boundary and contributes no behavioral outcome.
 
@@ -352,14 +371,8 @@ the two exploratory Birch deaths each received one separately authorized postmor
 
 the artifacts account `$0.00812` each and `$0.01624` total against their separate `$0.01` authorization caps. that is conservative authorization accounting for failed requests, not provider-reported spend.
 
-- [human-readable protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md)
-- [machine-readable manifest](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.json)
-- [scored result](../outputs/v0.14.0-session-005-turn-order-matrix-results.json)
-- [aggregate proof](../outputs/v0.14.0-session-005-turn-order-matrix-proof.md)
-- [postmortem seal](../outputs/v0.14.1-session-005-postmortem-seal-proof.md)
-- [b02-p3 postmortem failure](../outputs/v0.14.1-session-005-turn-order-b02-p3-29993-postmortem.json)
-- [b03-p2 postmortem failure](../outputs/v0.14.1-session-005-turn-order-b03-p2-29993-postmortem.json)
-- [cell b01-p0 proof](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993-proof.md)
+- [readable session receipt and source-file index](../outputs/session-005.md)
+- [lossless compressed session catalog](../outputs/session-005.json)
 - manifest SHA-256: `8ae4b6f3fd36e162ca1349be83e72424092a45807f7664e95a1788af9ab665c6`
 - scored-result SHA-256: `38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5`
 - b02-p3 postmortem SHA-256: `630ff5c92c84b0cca9b99dad5d47b8dfe8a7eff3759c7516aad873b0c974d5e4`

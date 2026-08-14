@@ -147,21 +147,37 @@ A `sequential-dialogue-v3` continuation uses live artifact `format_version` 6. O
 
 V6 permits at most one model assignment replacement per continuation. A replacement requires an explicit reason and must preserve the verified seat and public identity. The artifact records the seat, public name, previous model, replacement model, and reason in `assignment_transition_receipts`. A continuation with no replacement records an empty receipt list and preserves every assignment exactly.
 
+## campaign output catalogs
+
+committed campaign evidence uses exactly two files per numbered session. `outputs/session-NNN.json` is a lossless compressed catalog of the original source files, paths, roles, bytes, and hashes. `outputs/session-NNN.md` is its readable receipt and source-file index.
+
+session 4b is an extension inside the session-4 catalog, not a separately numbered session. session-5 attempt 001 is sealed and deviated, not cleanly complete; moving its retained files into a catalog does not change that scientific status.
+
+verify a catalog without provider calls:
+
+```powershell
+py -3.11 tools\session_catalog.py verify outputs\session-005.json
+```
+
+catalog verification proves the package inventory, pinned Git provenance, gzip envelope, bytes, and hashes. it does not rerun the separate world, replay, postmortem, or scoring verifiers. materialize the target catalog and the ancestor catalogs named in its receipt before running those checks.
+
+the current catalog builder is frozen to the one-time sessions-1-through-5 migration. later live sessions must emit their two canonical files directly.
+
 ## calibration boundary
 
 `tools/calibrate_survival.py` runs deterministic scripted policies, not live models. It rotates four public names through all four seats, pairs policies on identical seeds, replays every run, and applies fixed gates without provider calls.
 
 The retained v3 confirmation ran 5,120 simulations: five policies across 256 held-out seeds and four seat rotations. It passed all 21 unchanged ecology gates. Every retained aggregate physical metric and per-seed physical comparison matched the retained v2 confirmation. A focused engine test also held submitted choices fixed across three seeds and all four seat rotations, then matched physical state and objective events. The expected communication-only difference was that valid speech remains committed even if its sealed action is later cancelled or its speaker dies during physical resolution.
 
-- [v0.12.0 calibration proof](../outputs/v0.12.0-sequential-dialogue-v3-proof.md)
-- [v0.12.0 retained artifact](../outputs/v0.12.0-sequential-dialogue-v3-confirmation.json), SHA-256 `c0039eee84f65fe342dd848ecd811f38bc3fb9f4c01faf05bccf9be59b27d5a9`
+- [session-4 readable receipt and source-file index](../outputs/session-004.md)
+- [lossless compressed session-4 catalog](../outputs/session-004.json); the retained v0.12.0 artifact SHA-256 is `c0039eee84f65fe342dd848ecd811f38bc3fb9f4c01faf05bccf9be59b27d5a9`
 
 This calibration evidence establishes deterministic mechanics, replay, failure isolation, and scripted ecology parity. It does not predict how live models will use same-beat dialogue.
 
-Session 4 is the first retained live v3 observation. It completed with two reciprocal costly wood transfers, one rejected paid shelter attempt, four survivors, and no shelter. The [session proof](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) and [retained artifact](../outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json) preserve the full trace. One episode cannot establish a stable tendency to cooperate, defect, deceive, trust, or survive.
+Session 4 is the first retained live v3 observation. It completed with two reciprocal costly wood transfers, one rejected paid shelter attempt, four survivors, and no shelter. The [session-4 receipt](../outputs/session-004.md) and [lossless catalog](../outputs/session-004.json) preserve the full trace. One episode cannot establish a stable tendency to cooperate, defect, deceive, trust, or survive.
 
-The exact-parent reachability control proves that a fixed Cinder-to-Lumen two-wood gift followed by Lumen's shelter action succeeds in beat 1 under every initiative phase. The existing generic `MutualAidPolicy` builds no shelter because it has no wood-aid rule. See the [reachability proof](../outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md).
+The exact-parent reachability control proves that a fixed Cinder-to-Lumen two-wood gift followed by Lumen's shelter action succeeds in beat 1 under every initiative phase. The existing generic `MutualAidPolicy` builds no shelter because it has no wood-aid rule. The proof is indexed in the [session-4 receipt](../outputs/session-004.md) and preserved in its [lossless catalog](../outputs/session-004.json).
 
-The frozen session-5 design uses three new replicates per initiative phase. Every cell branches directly from session 2; session 4 is excluded as a post-hoc pilot. See the [matrix protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md).
+The frozen session-5 attempt-001 design uses three new replicates per initiative phase. Every cell branches directly from session 2; session 4 is excluded as a post-hoc pilot. Attempt 001 is sealed and deviated, so the full phase comparison is exploratory rather than a clean completed result. Its protocol and result are indexed in the [session-5 receipt](../outputs/session-005.md) and preserved in the [lossless catalog](../outputs/session-005.json).
 
 Combat, theft, hunting, reproduction, mutation, territory, money, tool use, and external systems remain out of scope.

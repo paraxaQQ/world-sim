@@ -1,28 +1,39 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import tempfile
 import unittest
 from copy import deepcopy
 from decimal import Decimal
 from pathlib import Path
 
+from _retained_outputs import retained_outputs_root
+from world_sim.session_catalog import materialize_session_catalog
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+RETAINED_REPOSITORY_ROOT = retained_outputs_root()
 SCORER_PATH = REPOSITORY_ROOT / "tools" / "score_turn_order_matrix.py"
 MANIFEST_PATH = (
-    REPOSITORY_ROOT
+    RETAINED_REPOSITORY_ROOT
     / "outputs"
     / "v0.13.0-session-005-turn-order-matrix-protocol.json"
 )
 COMPLETED_CELL = (
-    REPOSITORY_ROOT
+    RETAINED_REPOSITORY_ROOT
     / "outputs"
     / "v0.13.0-session-005-turn-order-b01-p1-29993.json"
 )
 FAILED_CELL = (
-    REPOSITORY_ROOT
+    RETAINED_REPOSITORY_ROOT
     / "outputs"
     / "v0.13.0-session-005-turn-order-b02-p2-29993.json"
+)
+RETAINED_SCORE = (
+    RETAINED_REPOSITORY_ROOT
+    / "outputs"
+    / "v0.14.0-session-005-turn-order-matrix-results.json"
 )
 
 SPEC = importlib.util.spec_from_file_location("score_turn_order_matrix", SCORER_PATH)
@@ -34,7 +45,10 @@ SPEC.loader.exec_module(SCORER)
 
 class TurnOrderMatrixScorerTests(unittest.TestCase):
     def test_retained_matrix_is_verified_and_failed_cells_are_censored(self) -> None:
-        report = SCORER.score_turn_order_matrix(MANIFEST_PATH)
+        report = SCORER.score_turn_order_matrix(
+            MANIFEST_PATH,
+            repository_root=RETAINED_REPOSITORY_ROOT,
+        )
 
         self.assertEqual(
             report["manifest"]["artifact_sha256"],
@@ -82,6 +96,58 @@ class TurnOrderMatrixScorerTests(unittest.TestCase):
             self.assertFalse(row["scoreable"])
             for field in SCORER.BEHAVIOR_FIELDS:
                 self.assertIsNone(row[field])
+
+    def test_retained_score_reproduces_byte_for_byte(self) -> None:
+        rendered = (
+            json.dumps(
+                SCORER.score_turn_order_matrix(
+                    MANIFEST_PATH,
+                    repository_root=RETAINED_REPOSITORY_ROOT,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+        self.assertEqual(rendered, RETAINED_SCORE.read_bytes())
+        self.assertEqual(
+            hashlib.sha256(rendered).hexdigest(),
+            "38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5",
+        )
+
+    def test_materialized_outputs_tree_scores_byte_identically(self) -> None:
+        expected = json.dumps(
+            SCORER.score_turn_order_matrix(
+                MANIFEST_PATH,
+                repository_root=RETAINED_REPOSITORY_ROOT,
+            ),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+
+        with tempfile.TemporaryDirectory() as directory:
+            repository_root = Path(directory)
+            for session in (1, 2, 5):
+                materialize_session_catalog(
+                    REPOSITORY_ROOT / "outputs" / f"session-{session:03d}.json",
+                    repository_root,
+                )
+
+            actual = json.dumps(
+                SCORER.score_turn_order_matrix(
+                    repository_root
+                    / MANIFEST_PATH.relative_to(RETAINED_REPOSITORY_ROOT),
+                    repository_root=repository_root,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+
+        self.assertEqual(actual, expected)
 
     def test_completed_behavior_is_recomputed_instead_of_trusted(self) -> None:
         artifact = json.loads(COMPLETED_CELL.read_text(encoding="utf-8"))

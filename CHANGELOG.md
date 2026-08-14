@@ -1,5 +1,12 @@
 # changelog
 
+## 0.15.0 - 2026-08-14
+
+- replace 73 split output files with one lossless machine bundle and one readable receipt for each of sessions 1 through 5
+- preserve every retired output as compressed exact bytes with its original path, size, role, and SHA-256
+- add strict catalog verification and temporary legacy materialization so existing replay and scoring checks remain usable
+- preserve every world result and protocol boundary; session 5 remains a sealed, deviated first attempt rather than a clean completed experiment
+
 ## 0.14.1 - 2026-08-14
 
 - close session 5 with one separately authorized postmortem attempt for each of its two exploratory Birch deaths

@@ -20,10 +20,12 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 2:** Birch and Aster stated a valid shelter plan, but nobody transferred the wood needed to execute it.
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
-- **session 4b:** the exact session-4 world continued without another resource intervention. Lumen built the first shelter; Birch recognized an unavoidable one-energy trap, waited through the day, and died during upkeep.
-- **session 5:** all twelve sibling cells are retained. eight completed and four were censored by technical failures. every completed cell contained a costly transfer, and five completed the shelter-enabling chain. its two separate postmortem attempts both received HTTP 401, so they produced no reflections and were not retried.
+- **session 4b:** this session-4 extension continued the exact session-4 world without another resource intervention. Lumen built the first shelter; Birch recognized an unavoidable one-energy trap, waited through the day, and died during upkeep.
+- **session 5, attempt 001:** all twelve sibling cells are retained. eight completed and four were censored by technical failures. every completed cell contained a costly transfer, and five completed the shelter-enabling chain. its two separate postmortem attempts both received HTTP 401, so they produced no reflections and were not retried.
 
-v0.14.1 seals session 5 without changing its score. the two death notices are retained as verified failure artifacts outside the world, and their authorization accounting is not presented as provider spend.
+v0.15.0 keeps session-5 attempt 001 sealed without changing its score and replaces the split campaign evidence with five lossless session catalogs. attempt 001 is deviated and not a cleanly completed preregistered experiment. the two death notices are retained as verified failure artifacts outside the world, and their authorization accounting is not presented as provider spend.
+
+committed campaign outputs use exactly two files per numbered session. `outputs/session-NNN.json` is the lossless compressed catalog: it preserves the original files, paths, bytes, roles, and hashes. `outputs/session-NNN.md` is the readable receipt. session 4b and its postmortem remain inside session 4 as an extension rather than becoming a sixth session.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
@@ -33,11 +35,11 @@ one campaign is not a general result. it cannot tell us whether a model is peace
 
 session 4 was solvable. from the exact session-2 parent, a fixed tape where Cinder gives Lumen two wood and Lumen builds produces the transfer at event 158 and the shelter at event 161. it works under all four initiative phases. the generic `MutualAidPolicy` still builds nothing because that calibration policy only gives food; its failure is a policy mismatch, not an impossible dilemma.
 
-the [reachability proof](outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md) and [full control artifact](outputs/v0.13.0-session-004-shelter-reachability-control-29993.json) retain the exact parent, transition, action tapes, results, and replay hashes.
+the reachability proof and full control artifact in the [session-4 receipt](outputs/session-004.md) and [lossless catalog](outputs/session-004.json) retain the exact parent, transition, action tapes, results, and replay hashes.
 
-session 4b then continued the exact session-4 state without changing shared resources. Birch's death and Lumen's shelter both replay exactly; Birch's separate postmortem response cannot enter the world. the [session-4b receipt](outputs/v0.13.1-session-004b-doomed-continuation-29993-proof.md) records the world and postmortem boundaries.
+session 4b then continued the exact session-4 state without changing shared resources. Birch's death and Lumen's shelter both replay exactly; Birch's separate postmortem response cannot enter the world. the [session-4 receipt](outputs/session-004.md) records this extension's world and postmortem boundaries.
 
-session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md), [scored result](outputs/v0.14.0-session-005-turn-order-matrix-results.json), [matrix proof](outputs/v0.14.0-session-005-turn-order-matrix-proof.md), and [postmortem seal](outputs/v0.14.1-session-005-postmortem-seal-proof.md) retain the question, raw rows, hashes, costs, and analysis boundary.
+session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [session-5 receipt](outputs/session-005.md) and [lossless catalog](outputs/session-005.json) retain attempt 001's frozen protocol, raw rows, hashes, costs, score, deviation, and postmortem seal.
 
 the descriptive scoreable rates were `0.5`, `1.0`, `0.5`, and `0.5` across phases 0 through 3, with two scoreable cells per phase. do not read that as a clean turn-order effect. the first technical failure occurred at execution position 6; positions 7 through 12 continued after review even though the frozen batch-stop wording did not define that resumption. those later cells and the full phase comparison are exploratory only.
 
@@ -125,14 +127,14 @@ py -3.11 tools\calibrate_survival.py `
   --interaction-protocol sequential-dialogue-v3 `
   --seed-start 20000 --seed-count 256 `
   --cycles 8 --bootstrap-samples 10000 `
-  --output outputs\v0.12.0-sequential-dialogue-v3-confirmation.json
+  --output artifacts\sequential-dialogue-v3-confirmation.json
 ```
 
 the retained `sequential-dialogue-v3` confirmation ran 5,120 simulations over 256 held-out seeds and passed all 21 fixed balance gates. inaction always ended in extinction. ordinary food-first behavior averaged `3.089844` survivors out of four; the visible mutual-aid rule averaged `3.311523`.
 
 every retained aggregate physical metric and per-seed physical comparison matches `global-beats-v2` exactly. a focused engine test also holds submitted choices fixed across three seeds and all four seat rotations, then compares physical state and objective events. one communication metric changed by design: the chatty food-first policy sent `31.488281` messages per run instead of `31.246094`. valid final-beat speech now remains visible even when its physical action is cancelled.
 
-those are balance results, not live-model results. see the [calibration proof](outputs/v0.12.0-sequential-dialogue-v3-proof.md) and [retained artifact](outputs/v0.12.0-sequential-dialogue-v3-confirmation.json).
+those are balance results, not live-model results. the retained proof and artifact are indexed in the [session-4 receipt](outputs/session-004.md) and preserved in its [lossless catalog](outputs/session-004.json).
 
 ## test the model wire for free
 
@@ -155,7 +157,7 @@ py -3.11 -m world_sim survive-live `
   --output artifacts\free-interactive-cycle-29997.json
 ```
 
-the retained free qualification made 16 calls with zero response-validation errors and replayed exactly. it was a transport and protocol test using four copies of the same model, not an experiment about a diverse population. see the [readiness proof](outputs/v0.5.1-live-readiness-proof.md) and [artifact](outputs/v0.5.1-free-interactive-cycle-29996.json).
+the retained free qualification made 16 calls with zero response-validation errors and replayed exactly. it was a transport and protocol test using four copies of the same model, not an experiment about a diverse population. its proof and artifact are indexed in the [session-1 receipt](outputs/session-001.md) and preserved in its [lossless catalog](outputs/session-001.json).
 
 free Zen model availability can change. check the [current OpenCode list](https://opencode.ai/docs/zen) before running it.
 
@@ -169,29 +171,30 @@ v6 can replace at most one hidden model assignment with `--replace-model PUBLIC_
 
 for every completed call, v6 binds the provider request, private view, parsed choice, and resulting world state. a failed partial beat binds the speech and choices already submitted while proving that no physical action resolved. the verifier rejects changes to call order, speech visibility, requests, views, choices, state, or assignment receipts.
 
-verify the complete session-1 → session-2 → session-3 chain without provider calls:
+verify the integrity of the session-1 through session-3 catalogs without provider calls:
 
 ```powershell
-py -3.11 tools\verify_live_artifact.py `
-  outputs\v0.11.0-session-003-global-beats-shelter-dilemma-29993.json `
-  --ancestor outputs\v0.8.0-paid-survival-29993.json `
-  --parent outputs\v0.9.0-session-002-shelter-dilemma-29993.json `
-  --artifact-sha256 ca283bd336fd58c1cb0e461e14e8394299cf3a06c7f44654f412ecf408756b27
+py -3.11 tools\session_catalog.py verify `
+  outputs\session-001.json `
+  outputs\session-002.json `
+  outputs\session-003.json
 ```
 
-session 3 is a historical format-v5 artifact. it failed before its first beat resolved, so the verifier checks its exact partial state and failed-call receipt instead of inventing a completed result.
+the catalog verifier checks the frozen inventory, gzip envelope, original paths, bytes, roles, SHA-256 values, and pinned Git blobs. it does not rerun the domain-specific world, replay, or scoring verifiers. `tools/session_catalog.py materialize` restores the requested catalogs; continuation and matrix checks also need the ancestor catalogs listed in each session receipt.
 
-verify the completed session-1 → session-2 → session-4 branch:
+source verification and materialization require commit `03c04a389a1b3b06edc46a9d0492ee1c0b9e38ba`. a depth-1 checkout must fetch that history first.
+
+the current `build` subcommand is deliberately frozen to the one-time sessions-1-through-5 migration. it is not the writer for later live sessions. the next live runner must emit its canonical JSON/Markdown pair directly instead of reviving split committed outputs.
+
+session 3 is a historical format-v5 artifact. it failed before its first beat resolved, so its retained live-artifact verification checks the exact partial state and failed-call receipt instead of inventing a completed result.
+
+verify the integrity of the session-4 catalog, which includes the session-4 branch and session-4b extension:
 
 ```powershell
-py -3.11 tools\verify_live_artifact.py `
-  outputs\v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993.json `
-  --ancestor outputs\v0.8.0-paid-survival-29993.json `
-  --parent outputs\v0.9.0-session-002-shelter-dilemma-29993.json `
-  --artifact-sha256 9e8f4d2b36ed771bc334549319ac6f34cd4ec4252906da350773c53391dc4915
+py -3.11 tools\session_catalog.py verify outputs\session-004.json
 ```
 
-session 4 branches from session 2 because session 3 changed no physical state. its [proof](outputs/v0.12.1-session-004-sequential-dialogue-shelter-dilemma-29993-proof.md) separates the real costly transfers from the failed shelter plan and the models' claims about it.
+session 4 branches from session 2 because session 3 changed no physical state. its [readable receipt](outputs/session-004.md) separates the real costly transfers from the failed shelter plan and the models' claims about it.
 
 ## after a simulated death
 
@@ -255,6 +258,8 @@ tools/check_shelter_reachability.py
                   exact-parent scripted reachability control
 tools/verify_postmortem_artifact.py
                   offline postmortem and immutable-world-link verifier
+tools/session_catalog.py
+                  migrate, verify, or materialize historical session catalogs
 tests/
   test_survival.py
   test_model_host.py

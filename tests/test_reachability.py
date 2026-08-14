@@ -4,13 +4,14 @@ import hashlib
 import unittest
 from pathlib import Path
 
+from _retained_outputs import retained_outputs_root
 from world_sim.reachability import run_shelter_reachability_control
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-ROOT = REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
+RETAINED_REPOSITORY_ROOT = retained_outputs_root()
+ROOT = RETAINED_REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
 PARENT = (
-    REPOSITORY_ROOT
+    RETAINED_REPOSITORY_ROOT
     / "outputs"
     / "v0.9.0-session-002-shelter-dilemma-29993.json"
 )

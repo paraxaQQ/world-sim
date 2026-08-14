@@ -68,7 +68,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def score_turn_order_matrix(manifest_path: Path) -> dict[str, Any]:
+def score_turn_order_matrix(
+    manifest_path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> dict[str, Any]:
+    repository_root = (
+        REPOSITORY_ROOT if repository_root is None else repository_root.resolve()
+    )
     manifest_path = manifest_path.resolve()
     manifest, manifest_sha256 = _load_json_object(
         manifest_path,
@@ -79,10 +86,12 @@ def score_turn_order_matrix(manifest_path: Path) -> dict[str, Any]:
     ancestor_path = _resolve_repo_path(
         fixed["ancestor_artifact"],
         name="fixed_treatment.ancestor_artifact",
+        repository_root=repository_root,
     )
     parent_path = _resolve_repo_path(
         fixed["parent_artifact"],
         name="fixed_treatment.parent_artifact",
+        repository_root=repository_root,
     )
     ancestor_sha256 = _require_sha256(
         fixed["ancestor_artifact_sha256"],
@@ -117,6 +126,7 @@ def score_turn_order_matrix(manifest_path: Path) -> dict[str, Any]:
             fixed=fixed,
             parent_path=parent_path,
             ancestor_path=ancestor_path,
+            repository_root=repository_root,
         )
         for cell in cells
     ]
@@ -126,7 +136,10 @@ def score_turn_order_matrix(manifest_path: Path) -> dict[str, Any]:
         "format_version": 1,
         "mode": "turn_order_matrix_score",
         "manifest": {
-            "path": _display_path(manifest_path),
+            "path": _display_path(
+                manifest_path,
+                repository_root=repository_root,
+            ),
             "artifact_sha256": manifest_sha256,
         },
         "verified_chain": {
@@ -299,12 +312,17 @@ def _score_cell(
     fixed: Mapping[str, object],
     parent_path: Path,
     ancestor_path: Path,
+    repository_root: Path,
 ) -> dict[str, Any]:
     block = _strict_int(cell["block"], name="cell.block")
     position = _strict_int(cell["execution_position"], name="cell position")
     phase = _strict_int(cell["initiative_phase"], name="cell phase")
     output = _text(cell["output"], name="cell.output")
-    path = _resolve_repo_path(output, name="cell.output")
+    path = _resolve_repo_path(
+        output,
+        name="cell.output",
+        repository_root=repository_root,
+    )
     base: dict[str, Any] = {
         "block": block,
         "execution_position": position,
@@ -677,15 +695,20 @@ def _load_json_object(
     return _mapping(payload, name=name), hashlib.sha256(raw).hexdigest()
 
 
-def _resolve_repo_path(value: object, *, name: str) -> Path:
+def _resolve_repo_path(
+    value: object,
+    *,
+    name: str,
+    repository_root: Path,
+) -> Path:
     text = _text(value, name=name)
     path = Path(text)
-    return path.resolve() if path.is_absolute() else (REPOSITORY_ROOT / path).resolve()
+    return path.resolve() if path.is_absolute() else (repository_root / path).resolve()
 
 
-def _display_path(path: Path) -> str:
+def _display_path(path: Path, *, repository_root: Path) -> str:
     try:
-        return path.relative_to(REPOSITORY_ROOT).as_posix()
+        return path.relative_to(repository_root).as_posix()
     except ValueError:
         return path.as_posix()
 

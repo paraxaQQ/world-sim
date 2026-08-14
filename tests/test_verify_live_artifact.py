@@ -10,10 +10,14 @@ from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
 
+from _retained_outputs import retained_outputs_root
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+RETAINED_REPOSITORY_ROOT = retained_outputs_root()
 VERIFIER_PATH = REPOSITORY_ROOT / "tools" / "verify_live_artifact.py"
-SESSION_1_ARTIFACT = REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
+SESSION_1_ARTIFACT = (
+    RETAINED_REPOSITORY_ROOT / "outputs" / "v0.8.0-paid-survival-29993.json"
+)
 SESSION_1_ARTIFACT_SHA256 = (
     "a98ec8216c08a172c4ed29fb1da65b63defd3b4a29f53e95fa26a1e187e38b90"
 )
@@ -21,7 +25,9 @@ SESSION_1_CANONICAL_SHA256 = (
     "490663b4a743f51c4b0f44ccc57ba91ee2a7b6d6adafbcda072373a7748a54e7"
 )
 SESSION_2_ARTIFACT = (
-    REPOSITORY_ROOT / "outputs" / "v0.9.0-session-002-shelter-dilemma-29993.json"
+    RETAINED_REPOSITORY_ROOT
+    / "outputs"
+    / "v0.9.0-session-002-shelter-dilemma-29993.json"
 )
 SESSION_2_ARTIFACT_SHA256 = (
     "fc0b07dfc404a2f485f3b6a2c2f191fec5e495153d6147d428d6cb251cab27fe"
@@ -30,7 +36,7 @@ SESSION_2_CANONICAL_SHA256 = (
     "ed1f299bbc698951e77256b46291ea4ee142469bc0a7cd0e7b6bf476820392ca"
 )
 SESSION_3_ARTIFACT = (
-    REPOSITORY_ROOT
+    RETAINED_REPOSITORY_ROOT
     / "outputs"
     / "v0.11.0-session-003-global-beats-shelter-dilemma-29993.json"
 )
@@ -1347,7 +1353,11 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                 )
 
     def test_failed_10k_episode_receipt_is_consistent(self) -> None:
-        artifact = REPOSITORY_ROOT / "outputs" / "v0.7.0-paid-reasoning-29994.json"
+        artifact = (
+            RETAINED_REPOSITORY_ROOT
+            / "outputs"
+            / "v0.7.0-paid-reasoning-29994.json"
+        )
 
         receipt = VERIFIER.verify_live_artifact(
             artifact,
@@ -1363,7 +1373,11 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         self.assertEqual(receipt["source_hashes_matched"], 8)
 
     def test_failed_paid_episode_receipt_is_consistent(self) -> None:
-        artifact = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
+        artifact = (
+            RETAINED_REPOSITORY_ROOT
+            / "outputs"
+            / "v0.6.0-paid-observation-29995.json"
+        )
 
         receipt = VERIFIER.verify_live_artifact(artifact)
 
@@ -1379,7 +1393,11 @@ class LiveArtifactVerifierTests(unittest.TestCase):
         )
 
     def test_failed_receipt_rejects_a_mismatched_failure_kind(self) -> None:
-        source = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
+        source = (
+            RETAINED_REPOSITORY_ROOT
+            / "outputs"
+            / "v0.6.0-paid-observation-29995.json"
+        )
         payload = json.loads(source.read_text(encoding="utf-8"))
         payload["failure"]["kind"] = "tampered"
         with tempfile.TemporaryDirectory() as directory:
@@ -1390,7 +1408,11 @@ class LiveArtifactVerifierTests(unittest.TestCase):
                 VERIFIER.verify_live_artifact(artifact)
 
     def test_failed_receipt_rejects_a_mismatched_identity(self) -> None:
-        source = REPOSITORY_ROOT / "outputs" / "v0.6.0-paid-observation-29995.json"
+        source = (
+            RETAINED_REPOSITORY_ROOT
+            / "outputs"
+            / "v0.6.0-paid-observation-29995.json"
+        )
         payload = json.loads(source.read_text(encoding="utf-8"))
         payload["failure"]["public_name"] = "tampered"
         with tempfile.TemporaryDirectory() as directory:
