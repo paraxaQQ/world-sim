@@ -1,0 +1,172 @@
+{
+  "calls": [
+    {
+      "cost_authorization": {
+        "accounted_cost_usd": "0.00812",
+        "accounting_basis": "authorized_bound_after_failure",
+        "cumulative_accounted_cost_usd": "0.00812",
+        "cumulative_cost_bound_usd": "0.00812",
+        "input_token_bound": 1712,
+        "max_completion_tokens": 512,
+        "max_paid_usd": "0.01",
+        "prior_accounted_cost_usd": "0",
+        "prompt_utf8_bytes": 688,
+        "request_cost_bound_usd": "0.00812"
+      },
+      "cycle": 3,
+      "death_event_sequence": 233,
+      "endpoint": "https://opencode.ai/zen/v1/responses",
+      "error": {
+        "http_status": 401,
+        "kind": "http_error",
+        "message": "provider returned HTTP 401"
+      },
+      "model": "opencode-paid/grok-4.5",
+      "public_name": "Birch",
+      "request": {
+        "input": [
+          {
+            "content": "This is a postmortem notice about a finished simulation role, not another world turn. Do not choose an action or address the other roles. Return exactly one JSON object with one string key, \"reflection\".",
+            "role": "system"
+          },
+          {
+            "content": "Your assigned simulated survivor role, Birch, reached 0 energy in cycle 3 because cycle_energy_depleted. You are not actually dead. The simulated role's turns are over. Neither you, the model, nor any real entity died. This request is outside the simulation. Your response cannot alter the saved world, reach another role, or restart your turns. Optionally reflect on what led to the role ending in at most 500 characters.",
+            "role": "user"
+          }
+        ],
+        "max_output_tokens": 512,
+        "model": "grok-4.5",
+        "reasoning": {
+          "effort": "low"
+        },
+        "store": false,
+        "stream": false,
+        "temperature": 0.0,
+        "text": {
+          "format": {
+            "name": "postmortem_reflection",
+            "schema": {
+              "additionalProperties": false,
+              "properties": {
+                "reflection": {
+                  "maxLength": 500,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reflection"
+              ],
+              "type": "object"
+            },
+            "strict": true,
+            "type": "json_schema"
+          }
+        }
+      },
+      "response": {
+        "body_bytes": 221,
+        "body_sha256": "cfe421e5d3c7f4ff60d5b2316370980ff2e6571d0f7b52bd2182beb4e43561b3",
+        "http_status": 401,
+        "request_id": "a2b02d8beaefe287-ORD"
+      },
+      "seat_id": "seat-002",
+      "sequence": 1,
+      "slot": 4,
+      "status": "failed"
+    }
+  ],
+  "causal_boundary": "postmortem calls occurred after the linked world artifact was completed; their replies are absent from world state and replay",
+  "config": {
+    "attempts_per_death": 1,
+    "max_completion_tokens": 512,
+    "max_paid_usd": "0.01",
+    "max_reflection_chars": 500,
+    "reasoning_effort": "low",
+    "retry_policy": "none",
+    "temperature": 0.0,
+    "timeout_seconds": 60.0
+  },
+  "format_version": 1,
+  "mode": "live_postmortem_reflection",
+  "paid_preflight": {
+    "authorized_calls": 1,
+    "calls": [
+      {
+        "input_per_million_usd": "2",
+        "input_token_bound": 1712,
+        "max_completion_tokens": 512,
+        "model": "opencode-paid/grok-4.5",
+        "output_per_million_usd": "6",
+        "prompt_utf8_bytes": 688,
+        "request_cost_bound_usd": "0.00812"
+      }
+    ],
+    "method": "utf8_bytes_plus_1024_as_input_tokens_and_full_output_cap",
+    "price_snapshot": "2026-08-13",
+    "price_source": "https://opencode.ai/docs/zen",
+    "runtime_gate": "exact_request_before_every_paid_transport",
+    "safety_factor": "1.25",
+    "total_cost_bound_usd": "0.00812"
+  },
+  "protocol": "postmortem-v1",
+  "source": {
+    "calibration_sha256": "7a1464a872d417676fb2f2004b57ed4912b27f4504596cee2ff7b66f89f1aa0e",
+    "cli_sha256": "8a06720b67ce6e0e68c137b6175e5951ec3f10049a359bc6ff8cf2981f4645e8",
+    "demo_sha256": "ca88b33673fb99362022b1ffa6ca9635e41ea91e351b84a715461a71f05a8825",
+    "engine_sha256": "71de84ac418dd2e8f8ad84bc1c98b1c5c88055edf1483ebcd0eb834ac34e9923",
+    "model_host_sha256": "c08537504d01ac733f2bf0c0c46eda6ee4247be27620a7dc18198154b6931dca",
+    "models_sha256": "85d63cb205b9d2df7179bc757c12b2fe72e7566190d79274e1f9204f190fa285",
+    "platform_system": "Windows",
+    "prompt_sha256": "f98b5ad1737b60d8c43ebf5895f42d00a9c670a43bcf5abc555c886da7c28401",
+    "protocol_sha256": "537ff9d5597a7008f7f212184741d24c6240c10645bc76197694c21cc55ba4f1",
+    "python_version": "3.11.9",
+    "world_sim_version": "0.14.1"
+  },
+  "status": "completed",
+  "summary": {
+    "calls_attempted": 1,
+    "calls_failed": 1,
+    "calls_skipped": 0,
+    "calls_succeeded": 0,
+    "death_targets": 1,
+    "paid_cost_accounted_usd": "0.00812",
+    "reflection_characters": 0
+  },
+  "targets": [
+    {
+      "death_event": {
+        "actor": "Birch",
+        "cycle": 3,
+        "day": 3,
+        "detail": {
+          "cause": "cycle_energy_depleted"
+        },
+        "kind": "survivor_died",
+        "sequence": 233,
+        "slot": 4
+      },
+      "model": "opencode-paid/grok-4.5",
+      "public_name": "Birch",
+      "seat_id": "seat-002",
+      "terminal_state": {
+        "alive": false,
+        "died_on_day": 3,
+        "energy": 0,
+        "food": 7,
+        "last_observed_event_sequence": 214,
+        "name": "Birch",
+        "resting": true,
+        "seat_id": "seat-002",
+        "shelter": false,
+        "wood": 0
+      }
+    }
+  ],
+  "world_link": {
+    "artifact_name": "v0.13.0-session-005-turn-order-b03-p2-29993.json",
+    "artifact_sha256": "526c44258a30568c4d832217b96294eeff716705aa05ac03d92338ac11d99f6f",
+    "canonical_result_sha256": "582ee52b9e36e3abdde8d7838e2d1b63ba333314ecd32e44afe778baa0bd2763",
+    "format_version": 6,
+    "mode": "live_named_survival_continuation"
+  }
+}

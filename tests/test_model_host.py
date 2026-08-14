@@ -1952,7 +1952,7 @@ class ModelHostTests(unittest.TestCase):
             "calibrated",
         )
         self.assertEqual(artifact["authentication"], {"opencode": "none"})
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.14.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.14.1")
         self.assertEqual(
             artifact["config"]["interaction_protocol"], GLOBAL_BEATS_V2
         )
@@ -2307,7 +2307,7 @@ class ModelHostTests(unittest.TestCase):
         )
 
         self.assertEqual(artifact["status"], "completed")
-        self.assertEqual(artifact["source"]["world_sim_version"], "0.14.0")
+        self.assertEqual(artifact["source"]["world_sim_version"], "0.14.1")
         self.assertEqual(len(transport.requests), 16)
         self.assertEqual(len(artifact["calls"]), 16)
         self.assertEqual(artifact["paid_preflight"]["authorized_calls"], 16)

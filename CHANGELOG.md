@@ -1,5 +1,12 @@
 # changelog
 
+## 0.14.1 - 2026-08-14
+
+- close session 5 with one separately authorized postmortem attempt for each of its two exploratory Birch deaths
+- retain both OpenCode HTTP 401 failures without retrying them or fabricating a reflection
+- independently verify both postmortem artifacts against their complete replayed world lineage
+- keep the postmortem attempts outside the frozen behavioral score and distinguish their `$0.01624` authorization accounting from provider-reported spend
+
 ## 0.14.0 - 2026-08-14
 
 - add an offline turn-order scorer that verifies every retained cell, recomputes objective outcomes, and censors failed partial worlds

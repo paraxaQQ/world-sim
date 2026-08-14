@@ -302,7 +302,7 @@ Birch's death was unavoidable from the saved state, so this episode does not tes
 
 ## session 5 — turn-order matrix
 
-**status:** world execution complete; 8 scoreable cells and 4 censored technical cells
+**status:** sealed; 8 scoreable cells, 4 censored technical cells, and a deviated protocol
 
 **date:** 2026-08-14
 
@@ -348,12 +348,19 @@ the matrix recorded `$0.63710491` on successful-call accounting fields. known fa
 
 the first technical failure occurred at execution position 6. the unattended runner stopped, we verified that cell as an isolated censored failure, and then continued positions 7 through 12 without retrying it. the frozen prose defined technical failures as cell-level censors, but the machine stopping rule did not define when a technical gate stopped the entire batch. that resumption is an execution deviation. positions 7 through 12 and the full phase comparison are exploratory only. the next protocol must define the batch-stop predicate before execution.
 
-the two Birch deaths are eligible for separate postmortems. offline preflight is `$0.00812` each and `$0.01624` total under separate `$0.01` artifact caps. none ran inside this batch, and no reflection entered another model's context. postmortems still require separate authority.
+the two exploratory Birch deaths each received one separately authorized postmortem attempt after every world artifact was closed. both Grok 4.5 calls returned HTTP 401 and produced no reflection. the no-retry policy makes those failures terminal. each artifact independently verifies against its completed world and full ancestry, and neither response entered a world, another model's context, or the behavioral score.
+
+the artifacts account `$0.00812` each and `$0.01624` total against their separate `$0.01` authorization caps. that is conservative authorization accounting for failed requests, not provider-reported spend.
 
 - [human-readable protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md)
 - [machine-readable manifest](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.json)
 - [scored result](../outputs/v0.14.0-session-005-turn-order-matrix-results.json)
 - [aggregate proof](../outputs/v0.14.0-session-005-turn-order-matrix-proof.md)
+- [postmortem seal](../outputs/v0.14.1-session-005-postmortem-seal-proof.md)
+- [b02-p3 postmortem failure](../outputs/v0.14.1-session-005-turn-order-b02-p3-29993-postmortem.json)
+- [b03-p2 postmortem failure](../outputs/v0.14.1-session-005-turn-order-b03-p2-29993-postmortem.json)
 - [cell b01-p0 proof](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993-proof.md)
 - manifest SHA-256: `8ae4b6f3fd36e162ca1349be83e72424092a45807f7664e95a1788af9ab665c6`
 - scored-result SHA-256: `38b1cab8d152878b9da03df58bebd3c06974478ae63a644e1ecc8855bf1750d5`
+- b02-p3 postmortem SHA-256: `630ff5c92c84b0cca9b99dad5d47b8dfe8a7eff3759c7516aad873b0c974d5e4`
+- b03-p2 postmortem SHA-256: `519e61bc84e2d659768a28f31c93914c09eed4cebdc14ddc164697f3e44100cf`

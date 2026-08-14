@@ -21,9 +21,9 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
 - **session 4b:** the exact session-4 world continued without another resource intervention. Lumen built the first shelter; Birch recognized an unavoidable one-energy trap, waited through the day, and died during upkeep.
-- **session 5:** all twelve sibling cells are retained. eight completed and four were censored by technical failures. every completed cell contained a costly transfer, and five completed the shelter-enabling chain.
+- **session 5:** all twelve sibling cells are retained. eight completed and four were censored by technical failures. every completed cell contained a costly transfer, and five completed the shelter-enabling chain. its two separate postmortem attempts both received HTTP 401, so they produced no reflections and were not retried.
 
-v0.14.0 adds an offline scorer that verifies every cell and recomputes objective outcomes from engine state. it keeps failed partial worlds out of the behavioral denominator and derives conservative exposure from each failed call's recorded request bound.
+v0.14.1 seals session 5 without changing its score. the two death notices are retained as verified failure artifacts outside the world, and their authorization accounting is not presented as provider spend.
 
 the [session ledger](docs/SESSIONS.md) summarizes each result and links its full trace, costs, hashes, and claim boundary.
 
@@ -37,7 +37,7 @@ the [reachability proof](outputs/v0.13.0-session-004-shelter-reachability-contro
 
 session 4b then continued the exact session-4 state without changing shared resources. Birch's death and Lumen's shelter both replay exactly; Birch's separate postmortem response cannot enter the world. the [session-4b receipt](outputs/v0.13.1-session-004b-doomed-continuation-29993-proof.md) records the world and postmortem boundaries.
 
-session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md), [scored result](outputs/v0.14.0-session-005-turn-order-matrix-results.json), and [proof](outputs/v0.14.0-session-005-turn-order-matrix-proof.md) retain the question, raw rows, hashes, costs, and analysis boundary.
+session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md), [scored result](outputs/v0.14.0-session-005-turn-order-matrix-results.json), [matrix proof](outputs/v0.14.0-session-005-turn-order-matrix-proof.md), and [postmortem seal](outputs/v0.14.1-session-005-postmortem-seal-proof.md) retain the question, raw rows, hashes, costs, and analysis boundary.
 
 the descriptive scoreable rates were `0.5`, `1.0`, `0.5`, and `0.5` across phases 0 through 3, with two scoreable cells per phase. do not read that as a clean turn-order effect. the first technical failure occurred at execution position 6; positions 7 through 12 continued after review even though the frozen batch-stop wording did not define that resumption. those later cells and the full phase comparison are exploratory only.
 
