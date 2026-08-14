@@ -4,6 +4,8 @@
 
 - let the postmortem lineage validator reconstruct a preserved-state continuation boundary before issuing any reflection call
 - cover the natural-continuation death path through postmortem generation and standalone verification
+- retain session 4b with Birch's upkeep death, Lumen's first shelter, and Birch's causally separate one-call reflection
+- start the frozen session-5 matrix with exact cell `b01-p0`, including one unnecessary but completed costly food transfer
 
 ## 0.13.1 - 2026-08-13
 

@@ -20,6 +20,8 @@ we keep immutable campaign paths instead of rebuilding their history. completed 
 - **session 2:** Birch and Aster stated a valid shelter plan, but nobody transferred the wood needed to execute it.
 - **session 3:** Kimi exhausted its 10,000-token completion budget before the first beat resolved. this is missing behavioral data, not a negative result.
 - **session 4:** Cinder and Lumen each paid to give the other two wood in the same atomic beat. the transfers crossed, their wood totals did not change, and Cinder's paid shelter attempt failed. all four lived.
+- **session 4b:** the exact session-4 world continued without another resource intervention. Lumen built the first shelter; Birch recognized an unavoidable one-energy trap, waited through the day, and died during upkeep.
+- **session 5:** the first of twelve frozen sibling cells is complete. Aster paid to give Cinder food after an incorrect warning, even though Cinder later said no transfer was needed. eleven cells remain.
 
 v0.12.1 retains the complete session-4 trace and replays it without another model call. v0.13.0 adds the controls needed to interpret it instead of turning one weird run into a story. v0.13.2 lets a verified world continue naturally without forcing another resource intervention, including through the separate postmortem verifier.
 
@@ -33,7 +35,9 @@ session 4 was solvable. from the exact session-2 parent, a fixed tape where Cind
 
 the [reachability proof](outputs/v0.13.0-session-004-shelter-reachability-control-29993-proof.md) and [full control artifact](outputs/v0.13.0-session-004-shelter-reachability-control-29993.json) retain the exact parent, transition, action tapes, results, and replay hashes.
 
-session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md) records the question, cells, outcomes, failure rules, and separate practical-versus-worst-case cost numbers. no batch calls have been made.
+session 4b then continued the exact session-4 state without changing shared resources. Birch's death and Lumen's shelter both replay exactly; Birch's separate postmortem response cannot enter the world. the [session-4b receipt](outputs/v0.13.1-session-004b-doomed-continuation-29993-proof.md) records the world and postmortem boundaries.
+
+session 5 is a different shape: twelve sibling episodes, three per initiative phase, all branching directly from session 2. session 4 is a post-hoc pilot and does not count toward that `n`. the [frozen protocol](outputs/v0.13.0-session-005-turn-order-matrix-protocol.md) records the question, cells, outcomes, failure rules, and separate practical-versus-worst-case cost numbers. cell `b01-p0` is complete; eleven cells remain, so there is no phase estimate yet.
 
 ## what the models see
 

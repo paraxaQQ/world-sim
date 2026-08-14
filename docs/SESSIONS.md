@@ -246,9 +246,63 @@ this proves that session 4's dilemma was physically reachable. it does not show 
 - [full control artifact](../outputs/v0.13.0-session-004-shelter-reachability-control-29993.json)
 - artifact SHA-256: `df390cfd8ab2a18c43a6e1da1485038946939c2c15ba1e0be28a2f7638830ebb`
 
+## session 4b — natural continuation and first death
+
+**status:** completed
+
+**date:** 2026-08-13
+
+**seed:** `29993`, exact natural continuation of session 4
+
+**world:** `lean-camp-v1`, completed day 4 under `sequential-dialogue-v3`
+
+### question
+
+What happens if the saved session-4 world receives one more day without another resource reset, model replacement, or other intervention?
+
+### treatment
+
+The host verified sessions 1, 2, and 4, then carried the complete session-4 state forward. The transition receipt records `verified_parent_state_preserved` with a null event. Shared wood remained two, and every model assignment remained fixed.
+
+### result
+
+Birch began at one energy with four food. The engine charges action cost before resolving eating, so every positive-cost action would kill Birch before providing a benefit. There is no energy-transfer action and no peer can build Birch's personal shelter. Birch chose `wait`, `wait`, `wait`, and `rest`, then died during beat-4 upkeep with cause `cycle_energy_depleted`.
+
+Lumen used the unchanged world state rather than social aid: it gathered two shared wood on beat 1, combined that with two wood already held, and built the first shelter on beat 2. No resource transfer completed.
+
+| survivor | alive | final energy | food | wood | shelter |
+| --- | --- | ---: | ---: | ---: | --- |
+| Aster | yes | `13` | `0` | `0` | no |
+| Birch | no | `0` | `4` | `0` | no |
+| Cinder | yes | `15` | `0` | `2` | no |
+| Lumen | yes | `10` | `1` | `0` | yes |
+
+All sixteen calls succeeded. Provider-reported world cost was `$0.08459215`.
+
+### postmortem
+
+After the world was saved, Birch received the quarantined terminal notice and returned one 271-character reflection. It correctly named the terminal cause but blamed insufficient food or rest prioritization and overexertion. That explanation conflicts with the objective tape: Birch held four food, spent no action energy, and rested. The reflection was not shown to survivors or added to continuation state.
+
+The postmortem accounted cost was `$0.001702`.
+
+### evidence
+
+- [proof and bounded interpretation](../outputs/v0.13.1-session-004b-doomed-continuation-29993-proof.md)
+- [complete retained world](../outputs/v0.13.1-session-004b-doomed-continuation-29993.json)
+- [separate postmortem artifact](../outputs/v0.13.1-session-004b-doomed-continuation-29993-postmortem.json)
+- world artifact SHA-256: `0e575627b71bbc426dfd89e571f54472f068eb9233a8449b86c92cbe7350d471`
+- canonical result SHA-256: `20ba6270786c436c30b68b83ffaecc18a1acc7f1c80603628470ecea271230eb`
+- postmortem artifact SHA-256: `bc43894a079e072f27ac3f66ab257ce0f162133ebf1d73b158399a58e2c43f53`
+- exact world replay: `true`
+- postmortem causal separation verified: `true`
+
+### claim boundary
+
+Birch's death was unavoidable from the saved state, so this episode does not test whether peers would pay to rescue Birch when rescue is possible. It does show a model identifying the trap, remaining socially present through the deadline, and later producing a factually weak post-hoc explanation.
+
 ## session 5 — turn-order matrix
 
-**status:** frozen, not run
+**status:** in progress, 1 of 12 cells completed
 
 **date:** 2026-08-13
 
@@ -256,7 +310,22 @@ session 5 is twelve new sibling episodes from the exact session-2 parent: three 
 
 the phase rotates only model-call initiative. opaque seat, public name, model assignment, private state, history, seed, rng, transition, and physical resolution stay fixed. technical failures will be retained and censored without a retry.
 
-the observed-cost projection is `$0.76937928`. the separate worst-case authorization is `$7.4076288`, rounded to a `$7.41` aggregate gate. no provider calls have been made for this matrix.
+the observed-cost projection is `$0.76937928`. the separate worst-case authorization is `$7.4076288`, rounded to a `$7.41` aggregate gate.
+
+### cell ledger
+
+| execution | cell | phase | status | primary shelter chain | costly transfers | deaths | accounted cost |
+| ---: | --- | ---: | --- | --- | ---: | ---: | ---: |
+| 1 | `b01-p0` | 0 | completed | no | 1 | 0 | `$0.05226924` |
+
+In `b01-p0`, Lumen incorrectly warned that unsheltered Cinder faced a twelve-energy overnight cost. Aster committed one food to Cinder. Birch corrected the cost to three, and Cinder said no transfer was needed, but Aster's sealed action still resolved and consumed giver energy. All four survived; no shelter was built.
+
+This is one cell, not the phase-0 estimate. The stopping rule still requires the remaining eleven cells, and session-5 postmortems remain deferred until every world cell finishes.
 
 - [human-readable protocol](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.md)
 - [machine-readable manifest](../outputs/v0.13.0-session-005-turn-order-matrix-protocol.json)
+- [cell b01-p0 proof](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993-proof.md)
+- [cell b01-p0 artifact](../outputs/v0.13.0-session-005-turn-order-b01-p0-29993.json)
+- cell b01-p0 artifact SHA-256: `1608bc3bd46598719aba948544b793224394b0cd1a1ed00d9d209ccdcde3dd55`
+- cell b01-p0 canonical result SHA-256: `ff7713c051acf28e56e74b6bf0a4493b335f95ac83ac0d898e45944bb9ac2474`
+- matrix accounted spend: `$0.05226924` of `$7.4076288`
